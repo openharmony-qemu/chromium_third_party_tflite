@@ -35,7 +35,7 @@ bool MemoryUsage::IsSupported() {
 
 MemoryUsage GetMemoryUsage() {
   MemoryUsage result;
-#ifdef __linux__
+#if defined(__linux__) && !defined(__MUSL__)
   rusage res;
   if (getrusage(RUSAGE_SELF, &res) == 0) {
     result.max_rss_kb = res.ru_maxrss;

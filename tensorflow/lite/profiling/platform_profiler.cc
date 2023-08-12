@@ -32,12 +32,16 @@ namespace tflite {
 namespace profiling {
 
 std::unique_ptr<tflite::Profiler> MaybeCreatePlatformProfiler() {
+#if defined(OSOHOS)
+  return nullptr;
+#else
 #if defined(__ANDROID__)
   return MaybeCreateATraceProfiler();
 #elif defined(SIGNPOST_PLATFORM_PROFILER)
   return MaybeCreateSignpostProfiler();
 #else
   return nullptr;
+#endif
 #endif
 }
 
