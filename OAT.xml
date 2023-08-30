@@ -104,9 +104,14 @@ used to filter file path.
                     desc="" />
                 <filteritem type="filepath" name="third_party/fft2d/LICENSE"
                     desc="" />
-                    <filteritem type="filepath" name="README.OpenSource"
+                <filteritem type="filepath" name="third_party/icu/data/BUILD.bazel"
                     desc="" />
 
+            </filefilter>
+            
+            <filefilter name="defaultFilter">
+                <filteritem type="filepath" name="README.OpenSource"
+                    desc="" />
             </filefilter>
         </filefilterlist>
 
