@@ -104,22 +104,14 @@ used to filter file path.
                     desc="" />
                 <filteritem type="filepath" name="third_party/fft2d/LICENSE"
                     desc="" />
-                    <filteritem type="filepath" name="third_party/icu/data/BUILD.bazel"
+                    <filteritem type="filepath" name="README.OpenSource"
                     desc="" />
+
             </filefilter>
         </filefilterlist>
 
         <licensematcherlist>
-            <licensematcher name="Apache License" desc="">
-                <licensetext name="
-
-                Apache License
-                Version 2.0, January 2004
-             http://www.apache.org/licenses/
-
-            TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
-                " desc=""/>
-            </licensematcher>
+       
 
             <licensematcher name="kronos license" desc="">
                 <licensetext name="
