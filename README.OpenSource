@@ -1,7 +1,7 @@
 [
     {
         "Name": "tflite",                 
-        "License":"LicenseRef-scancode-generic-cla"   
+        "License":"LicenseRef-scancode-generic-cla",   
         "License File": "LICENSE",     
         "Version Number": "7d380ffcce7a13884ca76d703ca0d983c870582c",
         "Owner": "jinchanggang@huawei.com",
@@ -10,7 +10,7 @@
     },
     {
         "Name": "tflite",                 
-        "License":"Apache-2.0"       
+        "License":"Apache-2.0",       
         "License File": "LICENSE",      
         "Version Number": "7d380ffcce7a13884ca76d703ca0d983c870582c",
         "Owner": "jinchanggang@huawei.com",
