@@ -60,14 +60,14 @@ used to filter file path.
 
 <configuration>
     <oatconfig>
-        <licensefile>
-
-        </licensefile>
+        <licensefile></licensefile>
         <policylist>
             <policy name="projectPolicy" desc="">
-                <policyitem type="compatibility" name="LGPLStyleLicense" path="third_party/gpus.*" desc="" />
-                <policyitem type="compatibility" name="MPL-2.0" path="third_party/eigen3.*" desc="" />
-                <policyitem type="compatibility" name="Unicode-TOU" path="third_party/icu/data/LICENSE" desc="" />
+                <policyitem type="compatibility" name="LGPLStyleLicense" path="third_party/gpus/.*" desc="经法务确认,涉及文件在render下进行了隔离" />
+                <policyitem type="compatibility" name="MPL-2.0" path="third_party/eigen3/.*" desc="经法务确认,涉及文件在render下进行了隔离" />
+                
+                <policyitem type="compatibility" name="Unicode-TOU" path="third_party/icu/data/LICENSE" desc="经法务确认为宽松型许可证" />
+                <policyitem type="compatibility" name="LicenseRef-scancode-proprietary-license" path="third_party/fft2d/LICENSE" desc="经法务确认为宽松型许可证" />
             </policy>
 
         </policylist>
@@ -75,35 +75,107 @@ used to filter file path.
         <filefilterlist>
             <filefilter name="defaultPolicyFilter"
                 desc="Filters for compatibility,license header policies">
-                <filteritem type="filepath" name=".*BUILD" desc="" />
-                <filteritem type="filepath" name=".*pbtxt" desc="" />
-                <filteritem type="filepath" name=".*apple" desc="" />
-                <filteritem type="filepath" name=".*tpl" desc="" />
-                <filteritem type="filepath" name=".*system" desc="" />
-                <filteritem type="filepath" name=".*bzl" desc="" />
-                <filteritem type="filepath" name=".*proto" desc="" />
-                <filteritem type="filepath" name=".*podspec" desc="" />
+                <filteritem type="filepath" name=".*BUILD" desc="chromium原生文件无license" />
+                <filteritem type="filepath" name=".*pbtxt" desc="chromium原生文件无license" />
+                <filteritem type="filepath" name=".*apple" desc="chromium原生文件无license" />
+                <filteritem type="filepath" name=".*tpl" desc="chromium原生文件无license" />
+                <filteritem type="filepath" name=".*system" desc="chromium原生文件无license" />
+                <filteritem type="filepath" name=".*bzl" desc="chromium原生文件无license" />
+                <filteritem type="filepath" name=".*proto" desc="chromium原生文件无license" />
+                <filteritem type="filepath" name=".*podspec" desc="chromium原生文件无license" />
                 <filteritem type="filepath" name="tensorflow/lite/tools/pip_package/Dockerfile"
-                    desc="" />
+                    desc="chromium原生文件无license" />
                 <filteritem type="filepath" name="tensorflow/lite/tools/pip_package/Dockerfile.py3"
-                    desc="" />
+                    desc="chromium原生文件无license" />
                 <filteritem type="filepath" name="tensorflow/lite/tools/pip_package/debian/copyright"
-                    desc="" />
+                    desc="chromium原生文件无license" />
                 <filteritem type="filepath" name="tensorflow/tools/ci_build/Dockerfile.rbe.cuda10.2-cudnn7-ubuntu18.04-manylinux2010-multipython"
-                    desc="" />
+                    desc="chromium原生文件无license" />
                 <filteritem type="filepath" name="tensorflow/compiler/mlir/tfrt/tests/remote_run_encapsulate.mlir"
-                    desc="" />
-                <filteritem type="filepath" name="third_party/fft2d/LICENSE"
-                    desc="" />
+                    desc="chromium原生文件无license" />
                 <filteritem type="filepath" name="third_party/icu/data/BUILD.bazel"
-                    desc="" />
+                    desc="chromium原生文件无license" />
 
             </filefilter>
             
             <filefilter name="defaultFilter">
                 <filteritem type="filepath" name="README.OpenSource"
-                    desc="" />
+                    desc="Filter readme.opensource files" />
+            </filefilter>
+             <filefilter name="binaryFileTypePolicyFilter">
+                <filteritem type="filename" name="*.png"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.bmp"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.jpg"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.gif"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.wav"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.bin"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.mdb"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.pb"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.index"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.gz"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.data-00000-of-00001"
+                    desc="chromium原生二进制文件，不会使用" />
+
+                <filteritem type="filepath" name="tensorflow/core/kernels/fuzzing/corpus/.*"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="third_party/icu/data/.*"
+                    desc="chromium原生二进制文件，不会使用" />
+                
+                <filteritem type="filepath" name="tensorflow/lite/.*"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="tensorflow/tools/ci_build/Dockerfile.rbe.cuda10.2-cudnn7-ubuntu18.04-manylinux2010-multipython"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="tensorflow/compiler/mlir/tfrt/tests/remote_run_encapsulate.mlir"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="third_party/fft2d/LICENSE"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="tensorflow/c/testdata/tf_record"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="tensorflow/compiler/aot/codegen_test_o.golden"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="third_party/icu/data/BUILD.bazel"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="tensorflow/python/compiler/tensorrt/test/testdata/tftrt_2.0_saved_model/variables/variables.data-00001-of-00002"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="tensorflow/python/compiler/tensorrt/test/testdata/tftrt_2.0_saved_model/variables/variables.data-00000-of-00002"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="tensorflow/core/profiler/internal/testdata/run_meta"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="tensorflow/core/profiler/internal/testdata/tfprof_log"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="tensorflow/python/compiler/tensorrt/test/testdata/tftrt_2.0_saved_model/variables/variables.data-00000-of-00002"
+                    desc="chromium原生二进制文件，不会使用" />
             </filefilter>
         </filefilterlist>
+         <licensematcherlist>
+            <licensematcher name="LicenseRef-scancode-proprietary-license" desc="">
+                <licensetext name="
+                You may use, copy, modify this code for any purpose and 
+                without fee. You may distribute this ORIGINAL package.
+            " desc="" />
+            </licensematcher>
+            <licensematcher name="Apache-2.0" desc="">
+                <licensetext name="
+                Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+                Upstream-Name: python3-tflite-runtime
+                Source: https://www.tensorflow.org/
+
+                Files: *
+                Copyright: Copyright 2019 Google, LLC &lt;packages@tensorflow.org&gt;
+                License: Apache-2.0
+
+            " desc="" />
+            </licensematcher>
+        </licensematcherlist>
     </oatconfig>
 </configuration>

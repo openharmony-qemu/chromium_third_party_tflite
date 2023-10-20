@@ -1,26 +1,11 @@
 [
     {
-        "Name": "tflite",                   # 上游开源软件名全称
-        "License":"LGPLStyleLicense"      # 上游开源软件中包含的许可证信息
-        "License File": "LICENSE"      # 许可证所在文件路径
+        "Name": "tflite",
+        "License":"Apache-2.0",
+        "License File": "LICENSE",
         "Version Number": "7d380ffcce7a13884ca76d703ca0d983c870582c",
-        "Upstream URL": "https://chromium.googlesource.com/external/github.com/tensorflow/tensorflow.git@7d380ffcce7a13884ca76d703ca0d983c870582c",   # 上游软件包发布地址
-        "Description": "第三方软件tflite"           # 开源软件功能描述
-    },
-    {
-        "Name": "tflite",                   # 上游开源软件名全称
-        "License":"MPL-2.0"       # 上游开源软件中包含的许可证信息
-        "License File": "LICENSE"      # 许可证所在文件路径
-        "Version Number": "7d380ffcce7a13884ca76d703ca0d983c870582c",
-        "Upstream URL": "https://chromium.googlesource.com/external/github.com/tensorflow/tensorflow.git@7d380ffcce7a13884ca76d703ca0d983c870582c",   # 上游软件包发布地址
-        "Description": "第三方软件tflite"           # 开源软件功能描述
-    },
-    {
-        "Name": "tflite",                   # 上游开源软件名全称
-        "License":"Unicode-TOU"        # 上游开源软件中包含的许可证信息
-        "License File": "LICENSE"      # 许可证所在文件路径
-        "Version Number": "7d380ffcce7a13884ca76d703ca0d983c870582c",
-        "Upstream URL": "https://chromium.googlesource.com/external/github.com/tensorflow/tensorflow.git@7d380ffcce7a13884ca76d703ca0d983c870582c",   # 上游软件包发布地址
-        "Description": "第三方软件tflite"           # 开源软件功能描述
-    },
+        "Owner": "jinchanggang@huawei.com",
+        "Upstream URL": "https://chromium.googlesource.com/external/github.com/tensorflow/tensorflow.git@7d380ffcce7a13884ca76d703ca0d983c870582c",
+        "Description": "第三方软件tflite,用于移动设备和嵌入式设备的轻量级解决方案"
+    }
 ]
