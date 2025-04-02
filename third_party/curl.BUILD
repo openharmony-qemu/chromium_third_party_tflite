@@ -14,11 +14,6 @@ CURL_WIN_COPTS = [
     "/DCURL_DISABLE_PROXY",
     "/DHAVE_LIBZ",
     "/DHAVE_ZLIB_H",
-    # Defining _USING_V110_SDK71_ is hackery to defeat curl's incorrect
-    # detection of what OS releases we can build on with VC 2012. This
-    # may not be needed (or may have to change) if the WINVER setting
-    # changes in //third_party/msvc/vc_12_0/CROSSTOOL.
-    "/D_USING_V110_SDK71_",
 ]
 
 CURL_WIN_SRCS = [
@@ -40,12 +35,20 @@ cc_library(
         "lib/asyn.h",
         "lib/asyn-ares.c",
         "lib/base64.c",
+        "lib/bufq.c",
+        "lib/bufq.h",
         "lib/bufref.c",
         "lib/bufref.h",
         "lib/c-hyper.c",
         "lib/c-hyper.h",
-        "lib/cf-http.c",
-        "lib/cf-http.h",
+        "lib/cf-h1-proxy.c",
+        "lib/cf-h1-proxy.h",
+        "lib/cf-h2-proxy.c",
+        "lib/cf-h2-proxy.h",
+        "lib/cf-haproxy.c",
+        "lib/cf-haproxy.h",
+        "lib/cf-https-connect.c",
+        "lib/cf-https-connect.h",
         "lib/cf-socket.c",
         "lib/cf-socket.h",
         "lib/cfilters.c",
@@ -85,8 +88,6 @@ cc_library(
         "lib/curl_hmac.h",
         "lib/curl_krb5.h",
         "lib/curl_ldap.h",
-        "lib/curl_log.c",
-        "lib/curl_log.h",
         "lib/curl_md4.h",
         "lib/curl_md5.h",
         "lib/curl_memory.h",
@@ -114,6 +115,8 @@ cc_library(
         "lib/curl_sspi.h",
         "lib/curl_threads.c",
         "lib/curl_threads.h",
+        "lib/curl_trc.c",
+        "lib/curl_trc.h",
         "lib/curlx.h",
         "lib/dict.c",
         "lib/dict.h",
@@ -121,6 +124,8 @@ cc_library(
         "lib/doh.h",
         "lib/dynbuf.c",
         "lib/dynbuf.h",
+        "lib/dynhds.c",
+        "lib/dynhds.h",
         "lib/easy.c",
         "lib/easy_lock.h",
         "lib/easygetopt.c",
@@ -147,8 +152,6 @@ cc_library(
         "lib/getinfo.h",
         "lib/gopher.c",
         "lib/gopher.h",
-        "lib/h2h3.c",
-        "lib/h2h3.h",
         "lib/hash.c",
         "lib/hash.h",
         "lib/headers.c",
@@ -164,6 +167,8 @@ cc_library(
         "lib/hsts.h",
         "lib/http.c",
         "lib/http.h",
+        "lib/http1.c",
+        "lib/http1.h",
         "lib/http2.c",
         "lib/http2.h",
         "lib/http_aws_sigv4.c",
@@ -191,6 +196,8 @@ cc_library(
         "lib/ldap.c",
         "lib/llist.c",
         "lib/llist.h",
+        "lib/macos.c",
+        "lib/macos.h",
         "lib/md4.c",
         "lib/md5.c",
         "lib/memdebug.c",
@@ -232,6 +239,7 @@ cc_library(
         "lib/sendf.h",
         "lib/setopt.c",
         "lib/setopt.h",
+        "lib/setup-os400.h",
         "lib/setup-vms.h",
         "lib/sha256.c",
         "lib/share.c",
@@ -285,12 +293,14 @@ cc_library(
         "lib/vauth/digest.c",
         "lib/vauth/digest.h",
         "lib/vauth/digest_sspi.c",
+        "lib/vauth/gsasl.c",
         "lib/vauth/krb5_gssapi.c",
         "lib/vauth/krb5_sspi.c",
         "lib/vauth/ntlm.c",
         "lib/vauth/ntlm.h",
         "lib/vauth/ntlm_sspi.c",
         "lib/vauth/oauth2.c",
+        "lib/vauth/spnego_gssapi.c",
         "lib/vauth/spnego_sspi.c",
         "lib/vauth/vauth.c",
         "lib/vauth/vauth.h",
@@ -301,6 +311,7 @@ cc_library(
         "lib/vquic/curl_msh3.h",
         "lib/vquic/curl_ngtcp2.c",
         "lib/vquic/curl_ngtcp2.h",
+        "lib/vquic/curl_osslq.h",
         "lib/vquic/curl_quiche.c",
         "lib/vquic/curl_quiche.h",
         "lib/vquic/vquic.c",
@@ -312,8 +323,6 @@ cc_library(
         "lib/vssh/wolfssh.c",
         "lib/vtls/bearssl.c",
         "lib/vtls/bearssl.h",
-        "lib/vtls/gskit.c",
-        "lib/vtls/gskit.h",
         "lib/vtls/gtls.c",
         "lib/vtls/gtls.h",
         "lib/vtls/hostcheck.c",
@@ -324,14 +333,13 @@ cc_library(
         "lib/vtls/mbedtls.h",
         "lib/vtls/mbedtls_threadlock.c",
         "lib/vtls/mbedtls_threadlock.h",
-        "lib/vtls/nss.c",
-        "lib/vtls/nssg.h",
         "lib/vtls/openssl.c",
         "lib/vtls/openssl.h",
         "lib/vtls/rustls.c",
         "lib/vtls/rustls.h",
         "lib/vtls/schannel.c",
         "lib/vtls/schannel.h",
+        "lib/vtls/schannel_int.h",
         "lib/vtls/schannel_verify.c",
         "lib/vtls/sectransp.h",
         "lib/vtls/vtls.c",
@@ -343,18 +351,16 @@ cc_library(
         "lib/vtls/x509asn1.h",
         "lib/warnless.c",
         "lib/warnless.h",
-        "lib/wildcard.c",
-        "lib/wildcard.h",
         "lib/ws.c",
         "lib/ws.h",
     ] + select({
-        "@org_tensorflow//tensorflow/tsl:macos": [
+        "@local_xla//xla/tsl:macos": [
             "lib/vtls/sectransp.c",
         ],
-        "@org_tensorflow//tensorflow/tsl:ios": [
+        "@local_xla//xla/tsl:ios": [
             "lib/vtls/sectransp.c",
         ],
-        "@org_tensorflow//tensorflow/tsl:windows": CURL_WIN_SRCS,
+        "@local_xla//xla/tsl:windows": CURL_WIN_SRCS,
         "//conditions:default": [
         ],
     }),
@@ -373,7 +379,7 @@ cc_library(
         "include/curl/websockets.h",
     ],
     copts = select({
-        "@org_tensorflow//tensorflow/tsl:windows": CURL_WIN_COPTS,
+        "@local_xla//xla/tsl:windows": CURL_WIN_COPTS,
         "//conditions:default": [
             "-Iexternal/curl/lib",
             "-D_GNU_SOURCE",
@@ -386,10 +392,10 @@ cc_library(
             "-Wno-string-plus-int",
         ],
     }) + select({
-        "@org_tensorflow//tensorflow/tsl:macos": [
+        "@local_xla//xla/tsl:macos": [
             "-fno-constant-cfstrings",
         ],
-        "@org_tensorflow//tensorflow/tsl:windows": [
+        "@local_xla//xla/tsl:windows": [
             # See curl.h for discussion of write size and Windows
             "/DCURL_MAX_WRITE_SIZE=16384",
         ],
@@ -400,10 +406,10 @@ cc_library(
     defines = ["CURL_STATICLIB"],
     includes = ["include"],
     linkopts = select({
-        "@org_tensorflow//tensorflow/tsl:android": [
+        "@local_xla//xla/tsl:android": [
             "-pie",
         ],
-        "@org_tensorflow//tensorflow/tsl:macos": [
+        "@local_xla//xla/tsl:macos": [
             "-Wl,-framework",
             "-Wl,CoreFoundation",
             "-Wl,-framework",
@@ -411,8 +417,8 @@ cc_library(
             "-Wl,-framework",
             "-Wl,Security",
         ],
-        "@org_tensorflow//tensorflow/tsl:ios": [],
-        "@org_tensorflow//tensorflow/tsl:windows": [
+        "@local_xla//xla/tsl:ios": [],
+        "@local_xla//xla/tsl:windows": [
             "-DEFAULTLIB:ws2_32.lib",
             "-DEFAULTLIB:advapi32.lib",
             "-DEFAULTLIB:crypt32.lib",
@@ -426,8 +432,8 @@ cc_library(
     deps = [
         "@zlib",
     ] + select({
-        "@org_tensorflow//tensorflow/tsl:ios": [],
-        "@org_tensorflow//tensorflow/tsl:windows": [],
+        "@local_xla//xla/tsl:ios": [],
+        "@local_xla//xla/tsl:windows": [],
         "//conditions:default": [
             "@boringssl//:ssl",
         ],
@@ -533,7 +539,7 @@ cc_binary(
         "src/tool_xattr.h",
     ],
     copts = select({
-        "@org_tensorflow//tensorflow/tsl:windows": CURL_BIN_WIN_COPTS,
+        "@local_xla//xla/tsl:windows": CURL_BIN_WIN_COPTS,
         "//conditions:default": [
             "-Iexternal/curl/lib",
             "-D_GNU_SOURCE",

@@ -25,8 +25,8 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/Quant/QuantOps.h"  // from @llvm-project
-#include "mlir/Dialect/Quant/QuantTypes.h"  // from @llvm-project
+#include "mlir/Dialect/Quant/IR/Quant.h"  // from @llvm-project
+#include "mlir/Dialect/Quant/IR/QuantTypes.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
@@ -40,11 +40,11 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
-#include "tensorflow/compiler/mlir/lite/quantization/quantization_config.h"
-#include "tensorflow/compiler/mlir/lite/quantization/quantization_traits.h"
-#include "tensorflow/compiler/mlir/lite/quantization/quantization_utils.h"
 #include "tensorflow/compiler/mlir/lite/transforms/passes.h"
 #include "tensorflow/compiler/mlir/lite/utils/validators.h"
+#include "tensorflow/compiler/mlir/quantization/common/quantization_lib/quantization_config.h"
+#include "tensorflow/compiler/mlir/quantization/common/quantization_lib/quantization_traits.h"
+#include "tensorflow/compiler/mlir/quantization/common/quantization_lib/quantization_utils.h"
 
 namespace mlir {
 namespace TFL {
@@ -249,6 +249,9 @@ void QuantizePass::runOnOperation() {
                        quant::CustomOpUpdateOptions::kWeightOnly,
                        quant_specs.custom_map);
   }
+  if (enable_float16_quantization_) {
+    quant_specs.inference_type = tensorflow::DT_HALF;
+  }
 
   const quant::QuantPassSpec quant_params = {
       {quant_specs.verify_numeric, error_tolerance_,
@@ -257,7 +260,9 @@ void QuantizePass::runOnOperation() {
 
   populateWithGenerated(patterns);
 
-  if (quant_specs.weight_quantization || quant_specs.use_fake_quant_num_bits) {
+  if (quant_specs.weight_quantization || quant_specs.use_fake_quant_num_bits ||
+      quant_specs.qdq_conversion_mode ==
+          quant::QDQConversionMode::kQDQDynamic) {
     patterns.add<TFLDynamicRangeQuantization>(ctx, quant_params);
   } else {
     patterns.add<TFLFullQuantization, TFLFullQuantizationReverse>(ctx,

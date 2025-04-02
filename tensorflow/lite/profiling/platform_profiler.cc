@@ -16,7 +16,6 @@ limitations under the License.
 
 #include <memory>
 
-#include "build/build_config.h"
 #include "tensorflow/lite/core/api/profiler.h"
 
 #if defined(__ANDROID__)
@@ -35,9 +34,6 @@ namespace tflite {
 namespace profiling {
 
 std::unique_ptr<tflite::Profiler> MaybeCreatePlatformProfiler() {
-#if BUILDFLAG(IS_OHOS)
-  return nullptr;
-#else
 #if defined(__ANDROID__)
   return MaybeCreateATraceProfiler();
 #elif defined(SIGNPOST_PLATFORM_PROFILER)
@@ -46,7 +42,6 @@ std::unique_ptr<tflite::Profiler> MaybeCreatePlatformProfiler() {
   return std::make_unique<tflite::profiling::PerfettoProfiler>();
 #else
   return nullptr;
-#endif
 #endif
 }
 

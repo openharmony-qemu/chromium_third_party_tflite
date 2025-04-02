@@ -49,6 +49,14 @@ INCLUDEPRE_RE = re.compile(r"absl::lts_[0-9]+::base_internal::ThrowStdOutOfRange
                            r"absl::lts_[0-9]+::StrAppend|" # for _pywrap_tfe
                            r"absl::lts_[0-9]+::hash_internal|" # for _pywrap_tfcompile
                            r"absl::lts_[0-9]+::container_internal|" # for _pywrap_tfcompile
+                           r"absl::lts_[0-9]+::Status::raw_code|" # for absl::Status
+                           r"absl::lts_[0-9]+::Status::code|" # for absl::Status
+                           r"absl::lts_[0-9]+::Status::UnrefNonInlined|"  # for absl::Status
+                           r"absl::lts_[0-9]+::Status::Status|" # for absl::Status
+                           r"absl::lts_[0-9]+::Status::ForEachPayload|" # for absl::Status
+                           r"absl::lts_[0-9]+::internal_statusor::Helper::Crash|"  # for absl::StatusOr
+                           r"absl::lts_[0-9]+::internal_statusor::Helper::HandleInvalidStatusCtorArg|"
+                           r"absl::lts_[0-9]+::internal_statusor::ThrowBadStatusOrAccess|"
                            r"absl::lts_[0-9]+::Cord|" # for tensorflow::Status
                            r"absl::lts_[0-9]+::Cord::DestroyCordSlow|" # for tensorflow::Status
                            r"absl::lts_[0-9]+::cord_internal::CordzInfo::MaybeTrackCordImpl" # tensorflow::Status usage of absl::Cord
@@ -193,7 +201,7 @@ def get_pybind_export_symbols(symbols_file, lib_paths_file):
   # `[//tensorflow/python:safe_ptr]`
   # `[//tensorflow:target_name_v2_25]`
   # `[//tensorflow/-/24/util_:port-5]`
-  section_header_filter = r"^\[\/\/(tensorflow(\/[\w-]+)*(:|\/)[\w-]+)\]"
+  section_header_filter = r"^\[\/\/(\w+(\/[\w-]+)*(:|\/)[\w-]+)\]"
 
   # Create a dict of target libs and their symbols to be exported and populate
   # it. (key = cc_library target, value = list of symbols) that we need to
@@ -292,18 +300,20 @@ def main():
     def_fp.write("\t ??_7ConfigProto@tensorflow@@6B@\n") # for _pywrap_tfe
     def_fp.write("\t ??_7CoordinatedTask@tensorflow@@6B@\n") # for _pywrap_tfe
     def_fp.write("\t ?InternalSwap@CoordinatedTask@tensorflow@@AEAAXPEAV12@@Z\n") # for _pywrap_tfe
-    def_fp.write("\t ?kSeed@MixingHashState@hash_internal@lts_20230125@absl@@0QEBXEB\n") # for _pywrap_tfcompile
-    def_fp.write("\t ?kEmptyGroup@container_internal@lts_20230125@absl@@3QBW4ctrl_t@123@B\n") # for _pywrap_tfcompile
+    def_fp.write("\t ?kSeed@MixingHashState@hash_internal@lts_20230802@absl@@0QEBXEB\n") # for _pywrap_tfcompile
+    def_fp.write("\t ?kEmptyGroup@container_internal@lts_20230802@absl@@3QBW4ctrl_t@123@B\n") # for _pywrap_tfcompile
     def_fp.write("\t ??_7GraphDef@tensorflow@@6B@\n")
     def_fp.write("\t ??_7DeviceProperties@tensorflow@@6B@\n")
     def_fp.write("\t ??_7MetaGraphDef@tensorflow@@6B@\n")
     def_fp.write("\t ??_7SavedModel@tensorflow@@6B@\n")
-    def_fp.write("\t ??0CoordinatedTask@tensorflow@@QEAA@XZ\n") # for _pywrap_tfe
     def_fp.write("\t ?Set@ArenaStringPtr@internal@protobuf@google@@QEAAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@PEAVArena@34@@Z\n") # _pywrap_tfe
     def_fp.write("\t ??1CoordinatedTask@tensorflow@@UEAA@XZ\n") # for _pywrap_tfe
     def_fp.write("\t ?CopyFrom@CoordinatedTask@tensorflow@@QEAAXAEBV12@@Z\n") # for _pywrap_tfe
     def_fp.write("\t ??0CoordinatedTask@tensorflow@@IEAA@PEAVArena@protobuf@google@@_N@Z\n") # for _pywrap_tfe
-    def_fp.write("\t ?MaybeTrackCordImpl@CordzInfo@cord_internal@lts_20230125@absl@@CAXAEAVInlineData@234@AEBV5234@W4MethodIdentifier@CordzUpdateTracker@234@@Z\n") # for tensorflow::Status usage of absl::Cord
+    def_fp.write("\t ??0LogMessageFatal@log_internal@lts_20230802@absl@@QEAA@PEBDH@Z\n") # for _pywrap_tfe
+    def_fp.write("\t ??1LogMessageFatal@log_internal@lts_20230802@absl@@QEAA@XZ\n") # for _pywrap_tfe
+    def_fp.write("\t ??$CopyToEncodedBuffer@$0A@@LogMessage@log_internal@lts_20230802@absl@@AEAAXV?$basic_string_view@DU?$char_traits@D@std@@@std@@@Z\n") # for _pywrap_tfe
+    def_fp.write("\t ?MaybeTrackCordImpl@CordzInfo@cord_internal@lts_20230802@absl@@CAXAEAVInlineData@234@AEBV5234@W4MethodIdentifier@CordzUpdateTracker@234@@Z\n") # for tensorflow::Status usage of absl::Cord
 
 
     # Each symbols returned by undname matches the same position in candidates.
@@ -354,3 +364,4 @@ def main():
 
 if __name__ == "__main__":
   sys.exit(main())
+  

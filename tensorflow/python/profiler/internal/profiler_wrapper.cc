@@ -67,7 +67,7 @@ PYBIND11_MODULE(_pywrap_profiler, m) {
       .def("start",
            [](ProfilerSessionWrapper& wrapper, const char* logdir,
               const py::dict& options) {
-             tensorflow::Status status;
+             absl::Status status;
              ToolOptions tool_options = ToolOptionsFromPythonDict(options);
              {
                py::gil_scoped_release release;
@@ -79,7 +79,7 @@ PYBIND11_MODULE(_pywrap_profiler, m) {
       .def("stop",
            [](ProfilerSessionWrapper& wrapper) {
              tensorflow::string content;
-             tensorflow::Status status;
+             absl::Status status;
              {
                py::gil_scoped_release release;
                status = wrapper.Stop(&content);
@@ -90,7 +90,7 @@ PYBIND11_MODULE(_pywrap_profiler, m) {
              return py::bytes(content);
            })
       .def("export_to_tb", [](ProfilerSessionWrapper& wrapper) {
-        tensorflow::Status status;
+        absl::Status status;
         {
           py::gil_scoped_release release;
           status = wrapper.ExportToTensorBoard();
@@ -112,7 +112,7 @@ PYBIND11_MODULE(_pywrap_profiler, m) {
         [](const char* service_addr, const char* logdir,
            const char* worker_list, bool include_dataset_ops, int duration_ms,
            int num_tracing_attempts, py::dict options) {
-          tensorflow::Status status;
+          absl::Status status;
           ToolOptions tool_options = ToolOptionsFromPythonDict(options);
           {
             py::gil_scoped_release release;
@@ -127,7 +127,7 @@ PYBIND11_MODULE(_pywrap_profiler, m) {
   m.def("monitor", [](const char* service_addr, int duration_ms,
                       int monitoring_level, bool display_timestamp) {
     tensorflow::string content;
-    tensorflow::Status status;
+    absl::Status status;
     {
       py::gil_scoped_release release;
       status = tensorflow::profiler::pywrap::Monitor(
@@ -160,7 +160,7 @@ PYBIND11_MODULE(_pywrap_profiler, m) {
 
         std::string tool_name = std::string(py_tool_name);
         ToolOptions tool_options = ToolOptionsFromPythonDict(options);
-        ::tensorflow::StatusOr<std::string> status_or_tool_data;
+        absl::StatusOr<std::string> status_or_tool_data;
         {
           py::gil_scoped_release release;
           status_or_tool_data =
@@ -169,7 +169,9 @@ PYBIND11_MODULE(_pywrap_profiler, m) {
         }
         if (!status_or_tool_data.ok()) {
           LOG(ERROR) << status_or_tool_data.status().message();
-          return py::make_tuple(py::bytes(""), py::bool_(false));
+          return py::make_tuple(
+              py::bytes(status_or_tool_data.status().message()),
+              py::bool_(false));
         }
         return py::make_tuple(py::bytes(status_or_tool_data.value()),
                               py::bool_(true));
@@ -180,7 +182,7 @@ PYBIND11_MODULE(_pywrap_profiler, m) {
 
   m.def("xspace_to_tools_data_from_byte_string",
         [](const py::list& xspace_string_list, const py::list& filenames_list,
-           const py::str& py_tool_name) {
+           const py::str& py_tool_name, const py::dict options = py::dict()) {
           std::vector<std::unique_ptr<tensorflow::profiler::XSpace>> xspaces;
           xspaces.reserve(xspace_string_list.size());
           std::vector<std::string> xspace_paths;
@@ -215,10 +217,10 @@ PYBIND11_MODULE(_pywrap_profiler, m) {
           }
 
           std::string tool_name = std::string(py_tool_name);
+          ToolOptions tool_options = ToolOptionsFromPythonDict(options);
           auto status_or_tool_data =
               tensorflow::profiler::ConvertMultiXSpacesToToolData(
-                  status_or_session_snapshot.value(), tool_name,
-                  /*options=*/{});
+                  status_or_session_snapshot.value(), tool_name, tool_options);
           if (!status_or_tool_data.ok()) {
             LOG(ERROR) << status_or_tool_data.status().message();
             return py::make_tuple(py::bytes(""), py::bool_(false));

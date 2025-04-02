@@ -14,7 +14,16 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/core/runtime_fallback/runtime/fallback_batch_kernel.h"
 
+#include <cstdint>
+#include <cstdlib>
+#include <optional>
+#include <string>
+
+#include "absl/strings/string_view.h"
+#include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/kernels/batching_util/bounded_executor.h"
+#include "tensorflow/core/lib/monitoring/gauge.h"
+#include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/runtime_fallback/kernel/kernel_fallback_compat_request_state.h"
 #include "tensorflow/core/tfrt/fallback/op_kernel_runner.h"
 #include "tensorflow/core/tfrt/utils/error_util.h"
@@ -35,9 +44,11 @@ constexpr char kMaxInflightBatchesAttr[] = "_max_inflight_batches";
 constexpr char kBatchesToAverageOverAttr[] = "_batches_to_average_over";
 // Default thread count in the per-process batching thread pool.
 // The value is the same as the TF batch kernel BatchKernel.
-constexpr int64_t kBatchThreadPoolSize = 128;
 
-int32 NumBatchThreadsFromEnvironmentWithDefault(int default_num_batch_threads) {
+}  // namespace
+
+int32 BatchFunctionFallbackKernelBase::
+    NumBatchThreadsFromEnvironmentWithDefault(int default_num_batch_threads) {
   int32_t num;
   const char* val = std::getenv("TF_NUM_BATCH_THREADS");
 
@@ -45,9 +56,8 @@ int32 NumBatchThreadsFromEnvironmentWithDefault(int default_num_batch_threads) {
                                                    : default_num_batch_threads;
 }
 
-}  // namespace
-
-thread::ThreadPool* GetOrCreateBatchThreadsPool() {
+thread::ThreadPool*
+BatchFunctionFallbackKernelBase::GetOrCreateBatchThreadsPool() {
   static thread::ThreadPool* shared_thread_pool = [&]() -> thread::ThreadPool* {
     serving::BoundedExecutor::Options options;
 
@@ -81,6 +91,18 @@ BatchFunctionFallbackKernelBase::BatchFunctionFallbackKernelBase(
   OP_REQUIRES_OK(c, c->GetAttr("max_enqueued_batches", &max_enqueued_batches_));
   OP_REQUIRES_OK(c, c->GetAttr("allowed_batch_sizes", &allowed_batch_sizes_));
 
+  OP_REQUIRES_OK(c, c->GetAttr("low_priority_max_batch_size",
+                               &low_priority_max_batch_size_));
+  OP_REQUIRES_OK(c, c->GetAttr("low_priority_batch_timeout_micros",
+                               &low_priority_batch_timeout_micros_));
+  OP_REQUIRES_OK(c, c->GetAttr("low_priority_allowed_batch_sizes",
+                               &low_priority_allowed_batch_sizes_));
+  OP_REQUIRES_OK(c, c->GetAttr("low_priority_max_enqueued_batches",
+                               &low_priority_max_enqueued_batches_));
+  OP_REQUIRES_OK(c,
+                 c->GetAttr("mixed_priority_policy", &mixed_priority_policy_));
+  OP_REQUIRES_OK(c, c->GetAttr("batch_padding_policy", &batch_padding_policy_));
+
   if (shared_name_.empty()) {
     // If shared_name is not supplied, use name instead (prevent collisions by
     // default).
@@ -95,8 +117,10 @@ BatchFunctionFallbackKernelBase::BatchFunctionFallbackKernelBase(
   if (c->HasAttr("enable_large_batch_splitting")) {
     OP_REQUIRES_OK(c, c->GetAttr("enable_large_batch_splitting",
                                  &enable_large_batch_splitting_));
+    has_attribute_enable_large_batch_splitting_ = true;
   } else {
     enable_large_batch_splitting_ = false;
+    has_attribute_enable_large_batch_splitting_ = false;
   }
 
   if (c->HasAttr("disable_padding")) {
@@ -127,7 +151,7 @@ BatchFunctionFallbackKernelBase::BatchFunctionFallbackKernelBase(
 
 Status BatchFunctionFallbackKernelBase::ValidateAllowedBatchSizes() const {
   if (allowed_batch_sizes_.empty()) {
-    return OkStatus();
+    return absl::OkStatus();
   }
   int32_t last_size = 0;
   for (size_t i = 0; i < allowed_batch_sizes_.size(); ++i) {
@@ -146,7 +170,7 @@ Status BatchFunctionFallbackKernelBase::ValidateAllowedBatchSizes() const {
 
     last_size = size;
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 void BatchFunctionFallbackKernelBase::SetAdaptiveBatchSchedulerOptions(
@@ -194,7 +218,7 @@ void BatchFunctionFallbackKernelBase::SetAdaptiveBatchSchedulerOptions(
   // valid.
   // Note`GetOrCreateBatchThreadsPool` creates the thread pool once and
   // re-uses the thread-pool instance afterwards.
-  thread::ThreadPool* thread_pool = tfrt_stub::GetOrCreateBatchThreadsPool();
+  thread::ThreadPool* thread_pool = GetOrCreateBatchThreadsPool();
   OP_REQUIRES(
       c, thread_pool != nullptr,
       errors::FailedPrecondition("Failed to create batch threads pool"));

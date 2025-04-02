@@ -1,21 +1,19 @@
 """Provides the repository macro to import Triton."""
 
 load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
+load("//third_party/triton:llvm_integration/series.bzl", "llvm_patch_list")
+load("//third_party/triton:temporary/series.bzl", "temporary_patch_list")
+load("//third_party/triton:xla_extensions/series.bzl", "extensions_files_patch_list")
 
 def repo():
     """Imports Triton."""
 
-    TRITON_COMMIT = "ee675492d4bf787e89025491b447211f6ea6cdcd"
-    TRITON_SHA256 = "59f594b55cc2054034840203f4889abfd204a2d34a7d167279b18e6d5c05575c"
-
+    TRITON_COMMIT = "cl680473520"
+    TRITON_SHA256 = "c18fa65138b8c566b2f0299ebde4242f0f30c3625741a17de73ed5b1990cdabb"
     tf_http_archive(
         name = "triton",
         sha256 = TRITON_SHA256,
         strip_prefix = "triton-{commit}".format(commit = TRITON_COMMIT),
         urls = tf_mirror_urls("https://github.com/openxla/triton/archive/{commit}.tar.gz".format(commit = TRITON_COMMIT)),
-        # For temporary changes which haven't landed upstream yet.
-        patch_file = [
-            "//third_party/triton:cl523184810.patch",
-            "//third_party/triton:cl523448105.patch",
-        ],
+        patch_file = extensions_files_patch_list + llvm_patch_list + temporary_patch_list,
     )
