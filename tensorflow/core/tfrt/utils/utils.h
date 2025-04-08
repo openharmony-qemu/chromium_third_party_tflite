@@ -15,7 +15,10 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_TFRT_UTILS_UTILS_H_
 #define TENSORFLOW_CORE_TFRT_UTILS_UTILS_H_
 
+#include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "absl/status/status.h"
 #include "tensorflow/core/framework/types.pb.h"
@@ -38,8 +41,8 @@ class BEFFile;
 class ExecutionContext;
 class HostContext;
 
-typedef tensorflow::gtl::InlinedVector<tfrt::DType, 4> TfrtDataTypeVector;
-typedef tensorflow::gtl::ArraySlice<tfrt::DType> TfrtDataTypeSlice;
+typedef absl::InlinedVector<tfrt::DType, 4UL> TfrtDataTypeVector;
+typedef absl::Span<const tfrt::DType> TfrtDataTypeSlice;
 
 DType ConvertTfDTypeToTfrtDType(tensorflow::DataType dtype);
 
@@ -66,11 +69,14 @@ void AddDummyTfrtDevices(const std::vector<std::string>& device_names,
 
 // Creates a BEF file from a BEF buffer. `runtime` is used to provide host
 // context for opening `bef`.
-tensorflow::StatusOr<RCReference<tfrt::BEFFile>> CreateBefFileFromBefBuffer(
+absl::StatusOr<RCReference<tfrt::BEFFile>> CreateBefFileFromBefBuffer(
     const tensorflow::tfrt_stub::Runtime& runtime, const tfrt::BefBuffer& bef);
 
 // Returns a unique integer within this process.
 int64_t GetUniqueInt();
+
+// Returns current CPU time.
+uint64_t GetCpuClockCycle();
 
 // A list of macros similar to `TF_RETURN_IF_ERROR`, with additional model
 // loading stage info.

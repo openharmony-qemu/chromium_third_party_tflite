@@ -4,7 +4,6 @@ def if_cuda(if_true, if_false = []):
 
     Returns a select statement which evaluates to if_true if we're building
     with CUDA enabled.  Otherwise, the select statement evaluates to if_false.
-
     """
     return select({
         "@local_config_cuda//:is_cuda_enabled": if_true,
@@ -16,12 +15,20 @@ def if_cuda_clang(if_true, if_false = []):
 
     Returns a select statement which evaluates to if_true if we're building
     with cuda-clang.  Otherwise, the select statement evaluates to if_false.
-
    """
    return select({
        "@local_config_cuda//cuda:using_clang": if_true,
        "//conditions:default": if_false
    })
+
+def if_cuda_exec(if_true, if_false = []):
+    """Synonym for if_cuda.
+
+    Selects if_true both in target and in exec configurations. In principle,
+    if_cuda would only need to select if_true in a target configuration, but
+    not in an exec configuration, but this is not currently implemented.
+    """
+    return if_cuda(if_true, if_false)
 
 def cuda_compiler(if_cuda_clang, if_nvcc, neither = []):
     """Shorthand for select()'ing on wheteher we're building with cuda-clang or nvcc.
@@ -69,7 +76,7 @@ def cuda_default_copts():
         if_nvcc = [
             "-Xcuda-fatbinary=--compress-all",
             # Ensure that NVCC matches clang's constexpr behavior.
-            "--expt-relaxed-constexpr"
+            "-nvcc_options=expt-relaxed-constexpr"
         ]
     )
 
@@ -86,6 +93,32 @@ def if_cuda_is_configured(x, no_cuda = []):
     if %{cuda_is_configured}:
       return select({"//conditions:default": x})
     return select({"//conditions:default": no_cuda})
+
+def if_cuda_newer_than(wanted_ver, if_true, if_false = []):
+    """Tests if CUDA was enabled during the configured process and if the
+    configured version is at least `wanted_ver`. `wanted_ver` needs
+    to be provided as a string in the format `<major>_<minor>`.
+    Example: `11_0`
+    """
+
+    wanted_major = int(wanted_ver.split('_')[0])
+    wanted_minor = int(wanted_ver.split('_')[1])
+
+    # Strip "64_" which appears in the CUDA version on Windows.
+    configured_version = "%{cuda_version}".rsplit("_", 1)[-1]
+    configured_version_parts = configured_version.split('.')
+
+    # On Windows, the major and minor versions are concatenated without a period and the minor only contains one digit.
+    if len(configured_version_parts) == 1:
+        configured_version_parts = [configured_version[0:-1], configured_version[-1:]]
+
+    configured_major = int(configured_version_parts[0])
+    configured_minor = int(configured_version_parts[1])
+
+    if %{cuda_is_configured} and (wanted_major, wanted_minor) <= (configured_major, configured_minor):
+      return select({"//conditions:default": if_true})
+    return select({"//conditions:default": if_false})
+
 
 def cuda_header_library(
         name,
@@ -116,9 +149,16 @@ def cuda_header_library(
         **kwargs
     )
 
-def cuda_library(copts = [], **kwargs):
+def cuda_library(copts = [], tags = [], deps = [], **kwargs):
     """Wrapper over cc_library which adds default CUDA options."""
-    native.cc_library(copts = cuda_default_copts() + copts, **kwargs)
+    native.cc_library(
+        copts = cuda_default_copts() + copts,
+        tags = tags + ["gpu"],
+        deps = deps + if_cuda_is_configured([
+            "@local_config_cuda//cuda:implicit_cuda_headers_dependency",
+        ]),
+        **kwargs
+    )
 
 def cuda_cc_test(copts = [], **kwargs):
     """Wrapper over cc_test which adds default CUDA options."""
@@ -142,3 +182,15 @@ enable_cuda_flag = rule(
     build_setting = config.bool(flag = True),
     attrs = {"enable_override": attr.bool()},
 )
+
+def if_version_equal_or_greater_than(
+        lib_version,
+        dist_version,
+        if_true,
+        if_false = []):
+    if tuple([int(x) for x in lib_version.split(".")]) >= tuple([
+        int(x)
+        for x in dist_version.split(".")
+    ]):
+        return if_true
+    return if_false

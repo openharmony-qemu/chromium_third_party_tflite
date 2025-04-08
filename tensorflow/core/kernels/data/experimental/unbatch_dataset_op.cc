@@ -19,6 +19,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "tensorflow/core/framework/dataset.h"
 #include "tensorflow/core/framework/dataset_options.pb.h"
 #include "tensorflow/core/framework/model.h"
@@ -28,12 +30,13 @@ limitations under the License.
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/gtl/inlined_vector.h"
+#include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/util/batch_util.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/mutex.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/platform/strcat.h"
-#include "tensorflow/tsl/platform/thread_annotations.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/platform/thread_annotations.h"
 
 namespace tensorflow {
 namespace data {
@@ -42,7 +45,6 @@ namespace {
 
 using tsl::mutex;
 using tsl::mutex_lock;
-using tsl::OkStatus;
 using tsl::Status;
 using tsl::strings::StrCat;
 
@@ -70,7 +72,7 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
           if (batch_size_ < 0 && shape.dim_size(0) >= 0) {
             batch_size_ = shape.dim_size(0);
           }
-          gtl::InlinedVector<int64_t, 4> partial_dim_sizes;
+          absl::InlinedVector<int64_t, 4UL> partial_dim_sizes;
           for (int i = 1; i < shape.dims(); ++i) {
             partial_dim_sizes.push_back(shape.dim_size(i));
           }
@@ -115,11 +117,37 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
     Status InputDatasets(
         std::vector<const DatasetBase*>* inputs) const override {
       inputs->push_back(input_);
-      return OkStatus();
+      return absl::OkStatus();
     }
 
     Status CheckExternalState() const override {
       return input_->CheckExternalState();
+    }
+
+    absl::Status Get(OpKernelContext* ctx, int64_t index,
+                     std::vector<Tensor>* out_tensors) const override {
+      TF_RETURN_IF_ERROR(CheckRandomAccessCompatible(index));
+      if (batch_size_ <= 0) {
+        return absl::FailedPreconditionError(absl::StrCat(
+            "Random access for the `unbatch` dataset requires a known batch "
+            "size. Got ",
+            batch_size_, "."));
+      }
+
+      const int64_t input_index = index / batch_size_;
+      const int64_t input_offset = index % batch_size_;
+      std::vector<Tensor> input_tensors;
+      TF_RETURN_IF_ERROR(input_->Get(ctx, input_index, &input_tensors));
+      for (int64_t i = 0; i < input_tensors.size(); ++i) {
+        const DataType& dtype = input_tensors[i].dtype();
+        TensorShape shape = input_tensors[i].shape();
+        shape.RemoveDim(0);
+
+        out_tensors->emplace_back(ctx->get_allocator({}), dtype, shape);
+        TF_RETURN_IF_ERROR(batch_util::MaybeMoveSliceToElement(
+            &input_tensors[i], &out_tensors->back(), input_offset));
+      }
+      return absl::OkStatus();
     }
 
    protected:
@@ -129,7 +157,7 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
       Node* input_graph_node = nullptr;
       TF_RETURN_IF_ERROR(b->AddInputDataset(ctx, input_, &input_graph_node));
       TF_RETURN_IF_ERROR(b->AddDataset(this, {input_graph_node}, output));
-      return OkStatus();
+      return absl::OkStatus();
     }
 
    private:
@@ -144,6 +172,8 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
       bool SymbolicCheckpointCompatible() const override { return true; }
 
       Status Initialize(IteratorContext* ctx) override {
+        mutex_lock l(mu_);
+        input_ckpt_ = std::make_unique<MemoryCheckpoint>(ctx->id_registry());
         return dataset()->input_->MakeIterator(ctx, this, prefix(),
                                                &input_impl_);
       }
@@ -154,7 +184,7 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
         mutex_lock l(mu_);
         if (!input_impl_) {
           *end_of_sequence = true;
-          return OkStatus();
+          return absl::OkStatus();
         }
         *end_of_sequence = false;
         while (!*end_of_sequence) {
@@ -171,13 +201,18 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
             }
             ++current_index_;
             *end_of_sequence = false;
-            return OkStatus();
+            if (current_index_ >= current_batch_size_) {
+              ctx->MergeCheckpoint(input_ckpt_.get());
+            }
+            return absl::OkStatus();
           }
           current_index_ = 0;
           current_batch_size_ = 0;
           tensors_.clear();
-          TF_RETURN_IF_ERROR(
-              input_impl_->GetNext(ctx, &tensors_, end_of_sequence));
+          auto input_ctx = std::make_unique<IteratorContext>(*ctx);
+          TF_RETURN_IF_ERROR(input_impl_->GetNext(input_ctx.get(), &tensors_,
+                                                  end_of_sequence));
+          input_ckpt_->Merge(input_ctx->checkpoint());
           if (!*end_of_sequence) {
             for (size_t i = 0; i < tensors_.size(); ++i) {
               if (tensors_[i].dims() == 0) {
@@ -199,7 +234,7 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
           }
         }
         input_impl_.reset();
-        return OkStatus();
+        return absl::OkStatus();
       }
 
      protected:
@@ -229,13 +264,14 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
             writer->WriteScalar(full_name("current_index"), current_index_));
         TF_RETURN_IF_ERROR(
             writer->WriteScalar(full_name("n"), current_batch_size_));
-        if (current_index_ < current_batch_size_) {
+        if (current_index_ < current_batch_size_ &&
+            !ctx->symbolic_checkpoint()) {
           for (size_t i = 0; i < tensors_.size(); ++i) {
             TF_RETURN_IF_ERROR(writer->WriteTensor(
                 full_name(StrCat("tensors[", i, "]")), tensors_[i]));
           }
         }
-        return OkStatus();
+        return absl::OkStatus();
       }
 
       Status RestoreInternal(IteratorContext* ctx,
@@ -256,22 +292,54 @@ class UnbatchDatasetOp : public UnaryDatasetOpKernel {
         tensors_.clear();
         tensors_.resize(dataset()->output_dtypes().size());
         if (current_index_ < current_batch_size_) {
+          TF_RETURN_IF_ERROR(RestoreTensors(ctx, reader));
+        }
+        return absl::OkStatus();
+      }
+
+     private:
+      // Restores the `tensors_` field (and its associated `shapes_`) from a
+      // checkpoint.
+      Status RestoreTensors(IteratorContext* ctx, IteratorStateReader* reader)
+          TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+        if (ctx->symbolic_checkpoint()) {
+          bool end_of_sequence;
+          auto input_ctx = std::make_unique<IteratorContext>(*ctx);
+          TF_RETURN_IF_ERROR(input_impl_->GetNext(input_ctx.get(), &tensors_,
+                                                  &end_of_sequence));
+          input_ckpt_->Merge(input_ctx->checkpoint());
+          if (end_of_sequence) {
+            return errors::FailedPrecondition(
+                "Unexpected end of sequence while symbolically restoring "
+                " UnbatchDataset. Please verify that the input produces data "
+                " deterministically.");
+          }
+        } else {
           for (size_t i = 0; i < tensors_.size(); ++i) {
             TF_RETURN_IF_ERROR(reader->ReadTensor(
                 ctx->flr(), full_name(StrCat("tensors[", i, "]")),
                 &tensors_[i]));
-            shapes_[i] = tensors_[i].shape();
-            shapes_[i].RemoveDim(0);
           }
         }
-        return OkStatus();
+        for (size_t i = 0; i < tensors_.size(); ++i) {
+          shapes_[i] = tensors_[i].shape();
+          shapes_[i].RemoveDim(0);
+        }
+        return absl::OkStatus();
       }
 
-     private:
       mutex mu_;
       int64_t current_index_ TF_GUARDED_BY(mu_);
       int64_t current_batch_size_ TF_GUARDED_BY(mu_);
       std::vector<Tensor> tensors_ TF_GUARDED_BY(mu_);
+      // Checkpoint to use for operations on input_impl_. We maintain a
+      // separate checkpoint from the one passed to unbatch so that we can
+      // control when symbolic checkpoint state will be propagated. In
+      // particular, we wait to propagate input checkpoint state until the
+      // tensors being unbatched have been fully consumed, so that if we need to
+      // restore the partially-unbatched tensors, we can do so by restoring the
+      // input and then calling GetNext() on it.
+      std::unique_ptr<MemoryCheckpoint> input_ckpt_ TF_GUARDED_BY(mu_);
       std::unique_ptr<IteratorBase> input_impl_ TF_GUARDED_BY(mu_);
       std::vector<TensorShape> shapes_ TF_GUARDED_BY(mu_);
     };

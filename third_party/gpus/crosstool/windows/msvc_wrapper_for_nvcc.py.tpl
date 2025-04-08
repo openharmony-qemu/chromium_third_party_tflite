@@ -122,7 +122,11 @@ def InvokeNvcc(argv, log=False):
   includes = ["-I " + include for include in include_options]
 
   defines, argv = GetOptionValue(argv, '/D')
-  defines = ['-D' + define for define in defines]
+  defines = [
+      '-D' + define
+      for define in defines
+      if 'BAZEL_CURRENT_REPOSITORY' not in define
+  ]
 
   undefines, argv = GetOptionValue(argv, '/U')
   undefines = ['-U' + define for define in undefines]
@@ -177,6 +181,9 @@ def InvokeNvcc(argv, log=False):
   nvccopts += ['--keep', '--keep-dir', tempdir]
   # Force C++17 dialect (note, everything in just one string!)
   nvccopts += ['--std c++17']
+  # This is so that nvcc does not complain about MSVC or CLANG.
+  nvccopts += ['-allow-unsupported-compiler']
+  nvccopts += ['--expt-extended-lambda', '--expt-relaxed-constexpr']
   if log:
     Log([NVCC_PATH] + nvccopts)
 
@@ -193,7 +200,29 @@ def InvokeNvcc(argv, log=False):
   proc.wait()
   return proc.returncode
 
+def ExpandParamsFileForArgv():
+  new_argv = []
+  for arg in sys.argv:
+    if arg.startswith("@"):
+      with open(arg.strip("@")) as f:
+        new_argv.extend([l.strip() for l in f.readlines()])
+    else:
+      new_argv.append(arg)
+
+  sys.argv = new_argv
+
+def ProcessFlagForCommandFile(flag):
+  if flag.startswith("/D") or flag.startswith("-D"):
+    # We need to re-escape /DFOO="BAR" as /DFOO=\"BAR\", so that we get
+    # `#define FOO "BAR"` after expansion as a string literal define
+    if flag.endswith('"') and not flag.endswith('\\"'):
+      flag = '\\"'.join(flag.split('"', 1))
+      flag = '\\"'.join(flag.rsplit('"', 1))
+      return flag
+  return flag
+
 def main():
+  ExpandParamsFileForArgv()
   parser = ArgumentParser()
   parser.add_argument('-x', nargs=1)
   parser.add_argument('--cuda_log', action='store_true')
@@ -212,7 +241,18 @@ def main():
   cpu_compiler_flags = [flag for flag in sys.argv[1:]
                              if not flag.startswith(('--cuda_log'))
                              and not flag.startswith(('-nvcc_options'))]
+  output = [flag for flag in cpu_compiler_flags if flag.startswith("/Fo")]
 
+  # Store command line options in a file to avoid hitting the character limit.
+  if len(output) == 1:
+    commandfile_path = output[0][3:] + ".msvc_params"
+    commandfile = open(commandfile_path, "w")
+    cpu_compiler_flags = [ProcessFlagForCommandFile(flag) for flag in cpu_compiler_flags]
+    commandfile.write("\n".join(cpu_compiler_flags))
+    commandfile.close()
+    return subprocess.call([CPU_COMPILER, "@" + commandfile_path])
+  else:
+    return subprocess.call([CPU_COMPILER] + cpu_compiler_flags)
   return subprocess.call([CPU_COMPILER] + cpu_compiler_flags)
 
 if __name__ == '__main__':
