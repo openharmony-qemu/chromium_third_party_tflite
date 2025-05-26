@@ -42,7 +42,7 @@ bool MemoryUsage::IsSupported() {
 
 MemoryUsage GetMemoryUsage() {
   MemoryUsage result;
-#if defined(__linux__) && !defined(__MUSL__)
+#ifdef __linux__
   rusage res;
   if (getrusage(RUSAGE_SELF, &res) == 0) {
     result.mem_footprint_kb = res.ru_maxrss;
