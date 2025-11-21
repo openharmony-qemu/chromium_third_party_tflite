@@ -1,0 +1,11 @@
+[
+    {
+        "Name": "tflite",
+        "License":"Apache-2.0",
+        "License File": "LICENSE",
+        "Version Number": "658227d3b535287dc6859788bde6076c4fe3fe7c",
+        "Owner": "huamengzheng@huawei.com",
+        "Upstream URL": "https://chromium.googlesource.com/external/github.com/tensorflow/tensorflow.git@658227d3b535287dc6859788bde6076c4fe3fe7c",
+        "Description": "第三方软件tflite,用于移动设备和嵌入式设备的轻量级解决方案"
+    }
+]
