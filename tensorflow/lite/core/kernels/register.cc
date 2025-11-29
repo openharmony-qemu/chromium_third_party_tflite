@@ -28,6 +28,7 @@ TfLiteRegistration* Register_NUMERIC_VERIFY();
 TfLiteRegistration* Register_AUDIO_SPECTROGRAM();
 TfLiteRegistration* Register_MFCC();
 TfLiteRegistration* Register_DETECTION_POSTPROCESS();
+TfLiteRegistration* Register_HADAMARD_ROTATION();
 
 }  // namespace custom
 
@@ -139,7 +140,7 @@ BuiltinOpResolver::BuiltinOpResolver() {
              /* max_version = */ 7);
   AddBuiltin(BuiltinOperator_TRANSPOSE, Register_TRANSPOSE(),
              /* min_version = */ 1,
-             /* max_version = */ 6);
+             /* max_version = */ 7);
   AddBuiltin(BuiltinOperator_MEAN, Register_MEAN(),
              /* min_version = */ 1,
              /* max_version = */ 3);
@@ -175,7 +176,7 @@ BuiltinOpResolver::BuiltinOpResolver() {
              /* max_version = */ 2);
   AddBuiltin(BuiltinOperator_CAST, Register_CAST(),
              /* min_version = */ 1,
-             /* max_version = */ 6);
+             /* max_version = */ 7);
   AddBuiltin(BuiltinOperator_DEQUANTIZE, Register_DEQUANTIZE(),
              /* min_version = */ 1,
              /* max_version = */ 6);
@@ -354,7 +355,7 @@ BuiltinOpResolver::BuiltinOpResolver() {
   AddBuiltin(BuiltinOperator_DYNAMIC_UPDATE_SLICE,
              Register_DYNAMIC_UPDATE_SLICE(),
              /* min_version = */ 1,
-             /* max_version = */ 2);
+             /* max_version = */ 4);
   AddBuiltin(BuiltinOperator_UNSORTED_SEGMENT_PROD,
              Register_UNSORTED_SEGMENT_PROD());
   AddBuiltin(BuiltinOperator_UNSORTED_SEGMENT_MAX,
@@ -388,6 +389,7 @@ BuiltinOpResolver::BuiltinOpResolver() {
   AddBuiltin(BuiltinOperator_STABLEHLO_PAD, Register_STABLEHLO_PAD());
   AddBuiltin(BuiltinOperator_STABLEHLO_COMPOSITE,
              Register_STABLEHLO_COMPOSITE());
+  AddBuiltin(BuiltinOperator_STABLEHLO_CASE, Register_STABLEHLO_CASE());
   AddCustom("NumericVerify", tflite::ops::custom::Register_NUMERIC_VERIFY());
   // TODO(andrewharp, ahentz): Move these somewhere more appropriate so that
   // custom ops aren't always included by default.
@@ -396,6 +398,8 @@ BuiltinOpResolver::BuiltinOpResolver() {
             tflite::ops::custom::Register_AUDIO_SPECTROGRAM());
   AddCustom("TFLite_Detection_PostProcess",
             tflite::ops::custom::Register_DETECTION_POSTPROCESS());
+  AddCustom("aeq.hadamard_rotation",
+            tflite::ops::custom::Register_HADAMARD_ROTATION());
   // By definition, all of the ops added above are not user-defined ops,
   // since they are supported by BuiltinOpResolver.
   may_directly_contain_user_defined_ops_ = false;

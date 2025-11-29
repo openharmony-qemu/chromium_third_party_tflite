@@ -14,25 +14,25 @@ limitations under the License.
 ==============================================================================*/
 
 #include <string>
-#include <string_view>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_replace.h"
+#include "absl/strings/string_view.h"
 #include "xla/error_spec.h"
-#include "xla/tests/hlo_test_base.h"
-#include "xla/tests/test_macros.h"
+#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
+#include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace {
 
-class SortTest : public HloTestBase {};
+using SortTest = HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>;
 
-XLA_TEST_F(SortTest, SortDim0) {
-  std::string_view hlo_text_module = R"(
+TEST_F(SortTest, SortDim0) {
+  absl::string_view hlo_text_module = R"(
     HloModule sort
 
     compare {
@@ -50,8 +50,8 @@ XLA_TEST_F(SortTest, SortDim0) {
   EXPECT_TRUE(RunAndCompare(hlo_text_module, ErrorSpec{0.0, 0.0}));
 }
 
-XLA_TEST_F(SortTest, SortDim1) {
-  std::string_view hlo_text_module = R"(
+TEST_F(SortTest, SortDim1) {
+  absl::string_view hlo_text_module = R"(
     HloModule sort
 
     compare {
@@ -69,8 +69,8 @@ XLA_TEST_F(SortTest, SortDim1) {
   EXPECT_TRUE(RunAndCompare(hlo_text_module, ErrorSpec{0.0, 0.0}));
 }
 
-XLA_TEST_F(SortTest, SortTwiceWithSameComparator) {
-  std::string_view hlo_text_module = R"(
+TEST_F(SortTest, SortTwiceWithSameComparator) {
+  absl::string_view hlo_text_module = R"(
     HloModule sort
 
     compare {
@@ -100,9 +100,9 @@ class SortManyInputsTest : public SortTest,
   }
 };
 
-XLA_TEST_P(SortManyInputsTest, SortManyInputs) {
+TEST_P(SortManyInputsTest, SortManyInputs) {
   int num_inputs = GetParam();
-  std::string_view hlo_text_module_template = R"(
+  absl::string_view hlo_text_module_template = R"(
     HloModule sort
 
     compare {

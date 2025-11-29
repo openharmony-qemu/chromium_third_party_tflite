@@ -26,22 +26,22 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/testlib/filecheck.h"
 #include "xla/literal.h"
 #include "xla/service/backend.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/gpu/mock_gpu_executor.h"
+#include "xla/stream_executor/mock_stream_executor.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -110,7 +110,10 @@ class DeterminismTest : public GpuCodegenTest {
     // prevents timer creation.
     TF_ASSERT_OK_AND_ASSIGN(stream_executor::Platform * default_platform,
                             PlatformUtil::GetDefaultPlatform());
-    stream_executor::gpu::MockGpuExecutor executor(default_platform, 0);
+    stream_executor::MockStreamExecutor executor;
+    EXPECT_CALL(executor, GetPlatform).WillRepeatedly([&] {
+      return default_platform;
+    });
     EXPECT_CALL(executor, CreateEventBasedTimer).Times(0);
     EXPECT_CALL(executor, GetDeviceDescription)
         .WillRepeatedly([this]() -> const se::DeviceDescription& {
@@ -123,6 +126,9 @@ class DeterminismTest : public GpuCodegenTest {
       return backend().default_stream_executor()->AsDnn();
     });
     EXPECT_CALL(executor, device_ordinal).WillRepeatedly([]() { return 0; });
+    EXPECT_CALL(executor, SynchronizeAllActivity).WillRepeatedly([&]() -> bool {
+      return true;
+    });
 
     TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                             ParseAndReturnVerifiedModule(hlo_string));
@@ -135,12 +141,12 @@ class DeterminismTest : public GpuCodegenTest {
     EXPECT_TRUE(filecheck_result.value());
   }
 
-  bool IsVoltaOrLater() const {
+  bool IsAmpereOrLater() const {
     return backend()
         .default_stream_executor()
         ->GetDeviceDescription()
         .cuda_compute_capability()
-        .IsAtLeastVolta();
+        .IsAtLeastAmpere();
   }
 
   bool IsRocm() const {
@@ -175,7 +181,6 @@ ENTRY e {
     debug_options_.set_xla_gpu_enable_triton_gemm(false);
   }
 
-  debug_options_.set_xla_gpu_triton_fusion_level(0);
   MatchOptimizedHlo(kHloText, R"(; CHECK: custom_call_target="__cublas$gemm")",
                     TimerCreation::kForbidden);
   AssertDeterminism(kHloText);
@@ -188,9 +193,9 @@ ENTRY e {
 }
 
 TEST_F(DeterminismTest, DeterministicTritonGemmUsesDefaultConfig) {
-  if (!IsVoltaOrLater()) {
+  if (!IsAmpereOrLater()) {
     GTEST_SKIP() << "Triton is not supported on non-NVIDIA and "
-                    "pre-Volta NVIDIA GPUs.";
+                    "pre-Ampere NVIDIA GPUs.";
   }
 
   constexpr absl::string_view kHloText = R"(
@@ -204,22 +209,27 @@ ENTRY e {
   // Disable autotuning.
   debug_options_.set_xla_gpu_deterministic_ops(true);
   // Check that triton is used but without autotuning (default config).
+  // TODO: b/407494653 - This is a bad test because it relies on particular
+  // implementation details to succeed. Thus, it tests that there is no
+  // autotuning happening in a brittle way. Fix this when refactoring the
+  // autotuner.
   AutotunerUtil::ClearAutotuneResults();
   MatchOptimizedHlo(kHloText, R"(
     CHECK: __triton_gemm
-    CHECK: {"block_m":"32","block_n":"32","block_k":"32","split_k":"1","num_stages":"1","num_warps":"4","num_ctas":"1"}
+    CHECK: {"block_m":"16","block_n":"16","block_k":"64","split_k":"1","num_stages":"4","num_warps":"2","num_ctas":"1"
   )",
                     TimerCreation::kForbidden);
   AssertDeterminism(kHloText, /*num_runs=*/3);
 }
 
 TEST_F(DeterminismTest, ExcludingNonDeterministicOpsDoesNotDisableAutotuning) {
-  if (!IsVoltaOrLater()) {
+  if (!IsAmpereOrLater()) {
     GTEST_SKIP() << "Triton is not supported on non-NVIDIA and "
-                    "pre-Volta NVIDIA GPUs.";
+                    "pre-Ampere NVIDIA GPUs.";
   }
 
   debug_options_.set_xla_gpu_cublas_fallback(false);
+  debug_options_.set_xla_gpu_cudnn_gemm_fusion_level(0);
   ASSERT_TRUE(debug_options_.xla_gpu_exclude_nondeterministic_ops());
   ASSERT_FALSE(debug_options_.xla_gpu_deterministic_ops());
   AutotunerUtil::ClearAutotuneResults();

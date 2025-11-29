@@ -162,16 +162,17 @@ TfLiteStatus TfliteNodeToNode(const TfLiteNode& node,
   return kTfLiteOk;
 }
 }  // namespace
-TfLiteStatus GenerateModelRuntimeInfo(const tflite::Interpreter& interpreter,
-                                      absl::string_view output_file_path) {
-  tflite::profiling::ModelRuntimeDetails model_runtime_details;
 
+TfLiteStatus GenerateModelRuntimeInfo(
+    const tflite::Interpreter& interpreter,
+    ModelRuntimeDetails& model_runtime_details) {
   const size_t num_subgraphs = interpreter.subgraphs_size();
 
   for (int i = 0; i < num_subgraphs; ++i) {
     RuntimeSubgraph* runtime_subgraph = model_runtime_details.add_subgraphs();
     runtime_subgraph->set_subgraph_id(i);
     runtime_subgraph->set_subgraph_type(RuntimeSubgraph::TFLITE_SUBGRAPH);
+    runtime_subgraph->set_name(interpreter.subgraph(i)->GetName());
 
     const tflite::Subgraph& subgraph = *(interpreter.subgraph(i));
     // Capturing information of all the tensors in this subgraph.
@@ -223,7 +224,17 @@ TfLiteStatus GenerateModelRuntimeInfo(const tflite::Interpreter& interpreter,
     runtime_subgraph->mutable_execution_plan()->Add(
         subgraph.execution_plan().begin(), subgraph.execution_plan().end());
   }
+  return kTfLiteOk;
+}
 
+TfLiteStatus GenerateModelRuntimeInfo(const tflite::Interpreter& interpreter,
+                                      absl::string_view output_file_path) {
+  ModelRuntimeDetails model_runtime_details;
+  auto status = GenerateModelRuntimeInfo(interpreter, model_runtime_details);
+  if (status != kTfLiteOk) {
+    TFLITE_LOG(ERROR) << "Failed to generate model runtime info: " << status;
+    return status;
+  }
   std::ofstream ofs(std::string(output_file_path),
                     std::ios::out | std::ios::binary);
   if (ofs.good()) {

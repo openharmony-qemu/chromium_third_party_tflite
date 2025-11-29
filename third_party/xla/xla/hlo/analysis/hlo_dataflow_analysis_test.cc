@@ -22,6 +22,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -33,15 +34,16 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/hlo/testlib/test.h"
+#include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/literal_util.h"
-#include "xla/service/flatten_call_graph.h"
 #include "xla/service/hlo_creation_utils.h"
-#include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_value.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
@@ -156,6 +158,11 @@ TEST_P(HloDataflowAnalysisTest, BinaryOperation) {
   EXPECT_FALSE(analysis.GetValueDefinedAt(constant1).live_out_of_module());
   EXPECT_FALSE(analysis.GetValueDefinedAt(constant2).live_out_of_module());
   EXPECT_TRUE(analysis.GetValueDefinedAt(add).live_out_of_module());
+
+  // Check analysis ToString
+  EXPECT_THAT(
+      analysis.ToString(),
+      testing::HasSubstr("HloDataflowAnalysis, module BinaryOperation"));
 }
 
 TEST_P(HloDataflowAnalysisTest, TupleAndGtes) {
@@ -1189,6 +1196,75 @@ ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
   }
 }
 
+TEST_P(HloDataflowAnalysisTest, AsyncCallWithConditional) {
+  std::string hlo_str = R"(
+HloModule AsyncCall
+
+%cond_computation.1 (param_0: f32[4096]) -> f32[4096] {
+  ROOT %param_0_t = f32[4096]{0} parameter(0)
+}
+
+%cond_computation.2 (param_1: f32[4096]) -> f32[4096] {
+  %param_0_f = f32[4096]{0} parameter(0)
+  ROOT %negate = f32[4096]{0} negate(f32[4096]{0} %param_0_f)
+}
+
+%called_computation (param_0: pred[], param_1: f32[4096]) -> f32[4096] {
+  %param_0 = pred[] parameter(0)
+  %param_1 = f32[4096]{0} parameter(1)
+  ROOT %conditional = f32[4096]{0} conditional(pred[] %param_0, f32[4096]{0} %param_1, f32[4096]{0} %param_1), true_computation=%cond_computation.1, false_computation=%cond_computation.2
+}
+
+ENTRY %main (a: f32[4096], pred: pred[]) -> f32[4096] {
+  %a = f32[4096]{0} parameter(1)
+  %p = pred[] parameter(0)
+  %async-start = ((pred[], f32[4096]{0}), f32[4096]{0}, u32[]) call-start(pred[] %p, f32[4096]{0} %a), to_apply=%called_computation
+  ROOT %async-done = f32[4096]{0} call-done(%async-start)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(
+      module_, ParseAndReturnVerifiedModule(hlo_str, GetModuleConfigForTest()));
+
+  bool ssa_form = GetParam();
+  const HloDataflowAnalysis& analysis = RunAnalysis(ssa_form);
+
+  const HloInstruction* a = FindInstruction(module_.get(), "a");
+  const HloInstruction* p = FindInstruction(module_.get(), "p");
+  const HloInstruction* param_0_t = FindInstruction(module_.get(), "param_0_t");
+  EXPECT_THAT(HloValuesAt(param_0_t),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(a)));
+  const HloInstruction* param_0_f = FindInstruction(module_.get(), "param_0_f");
+  EXPECT_THAT(HloValuesAt(param_0_f),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(a)));
+  const HloInstruction* param_0 = FindInstruction(module_.get(), "param_0");
+  EXPECT_THAT(HloValuesAt(param_0),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(p)));
+  const HloInstruction* conditional =
+      FindInstruction(module_.get(), "conditional");
+  if (ssa_form) {
+    EXPECT_EQ(HloValuesAt(conditional).size(), 1);
+    EXPECT_TRUE(HloValuesAt(conditional)[0]->is_phi());
+  } else {
+    EXPECT_EQ(HloValuesAt(conditional).size(), 2);
+  }
+
+  for (std::string async_name : {"async-start", "async-done"}) {
+    const HloInstruction* async_op = FindInstruction(module_.get(), async_name);
+    const HloComputation* called_computation =
+        async_op->async_wrapped_instruction()->called_computations()[0];
+    const HloInstruction* parameter0 =
+        called_computation->parameter_instruction(0);
+    EXPECT_FALSE(analysis.ValueIsDefinedAt(parameter0));
+    EXPECT_THAT(HloValuesAt(parameter0),
+                UnorderedElementsAre(&analysis.GetValueDefinedAt(p)));
+    const HloInstruction* parameter1 =
+        called_computation->parameter_instruction(1);
+    EXPECT_FALSE(analysis.ValueIsDefinedAt(parameter1));
+    EXPECT_THAT(HloValuesAt(parameter1),
+                UnorderedElementsAre(&analysis.GetValueDefinedAt(a)));
+  }
+}
+
 TEST_P(HloDataflowAnalysisTest, TupleShapedAsyncOp) {
   std::string hlo_str = R"(
   HloModule module
@@ -1224,9 +1300,10 @@ TEST_P(HloDataflowAnalysisTest, SendAndSendDone) {
   auto param = builder.AddInstruction(
       HloInstruction::CreateParameter(0, scalar_shape_, "param0"));
   auto token = builder.AddInstruction(HloInstruction::CreateToken());
-  auto send = builder.AddInstruction(
-      HloInstruction::CreateSend(param, token, /*channel_id=*/0));
-  auto send_done = builder.AddInstruction(HloInstruction::CreateSendDone(send));
+  auto send = builder.AddInstruction(HloInstruction::CreateSend(
+      param, token, /*channel_id=*/0, /*is_host_transfer=*/false));
+  auto send_done = builder.AddInstruction(HloInstruction::CreateSendDone(
+      send, send->channel_id(), /*is_host_transfer=*/false));
   module_->AddEntryComputation(builder.Build());
   SCOPED_TRACE(module_->ToString());
 
@@ -1273,9 +1350,10 @@ TEST_P(HloDataflowAnalysisTest, RecvAndRecvDone) {
   // {0} of the output.
   auto builder = HloComputation::Builder(TestName());
   auto token = builder.AddInstruction(HloInstruction::CreateToken());
-  auto recv = builder.AddInstruction(
-      HloInstruction::CreateRecv(scalar_shape_, token, /*channel_id=*/0));
-  auto recv_done = builder.AddInstruction(HloInstruction::CreateRecvDone(recv));
+  auto recv = builder.AddInstruction(HloInstruction::CreateRecv(
+      scalar_shape_, token, /*channel_id=*/0, /*is_host_transfer=*/false));
+  auto recv_done = builder.AddInstruction(HloInstruction::CreateRecvDone(
+      recv, recv->channel_id(), /*is_host_transfer=*/false));
   module_->AddEntryComputation(builder.Build());
   SCOPED_TRACE(module_->ToString());
 
@@ -2091,6 +2169,52 @@ TEST_F(HloDataflowAnalysisTest, AllReduceStartAndDoneTwoOperands) {
               UnorderedElementsAre(HloUse{start, 1, {}}));
   EXPECT_THAT(analysis->GetValueDefinedAt(start, {}).GetUses(),
               UnorderedElementsAre(HloUse{done, 0, {}}));
+}
+
+TEST_F(HloDataflowAnalysisTest, CombinedCollectivePermuteStartAndDone) {
+  const char* hlo_text = R"(
+    HloModule test
+    ENTRY entry {
+      p0 = f32[2] parameter(0)
+      p1 = f32[2] parameter(1)
+      start = ((f32[2], f32[2]), (f32[2], f32[2])) collective-permute-start(p0, p1), source_target_pairs={{0,1},{1,0}}
+      ROOT done = (f32[2], f32[2]) collective-permute-done(start)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_text));
+  const HloDataflowAnalysis& analysis = RunAnalysis(/*ssa_form=*/false);
+  absl::Status status = analysis.Verify();
+  EXPECT_TRUE(status.ok()) << status;
+
+  HloInstruction* done = module_->entry_computation()->root_instruction();
+  HloInstruction* start = done->mutable_operand(0);
+  HloInstruction* param0 = start->mutable_operand(0);
+  HloInstruction* param1 = start->mutable_operand(1);
+
+  EXPECT_TRUE(analysis.ValueIsDefinedAt(start, /*index=*/{}));
+  EXPECT_TRUE(analysis.ValueIsDefinedAt(start, /*index=*/{1}));
+  EXPECT_TRUE(analysis.ValueIsDefinedAt(start, /*index=*/{1, 0}));
+  EXPECT_TRUE(analysis.ValueIsDefinedAt(start, /*index=*/{1, 1}));
+
+  EXPECT_TRUE(analysis.ValueIsDefinedAt(done, /*index=*/{}));
+  EXPECT_FALSE(analysis.ValueIsDefinedAt(done, /*index=*/{0}));
+  EXPECT_FALSE(analysis.ValueIsDefinedAt(done, /*index=*/{1}));
+
+  EXPECT_THAT(
+      analysis.GetValueDefinedAt(param0).GetUses(),
+      UnorderedElementsAre(HloUse{start, 0, {}}, HloUse{done, 0, {0, 0}}));
+  EXPECT_THAT(
+      analysis.GetValueDefinedAt(param1).GetUses(),
+      UnorderedElementsAre(HloUse{start, 1, {}}, HloUse{done, 0, {0, 1}}));
+
+  EXPECT_THAT(HloValuesAt(start, /*index=*/{0, 0}),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(param0, {})));
+  EXPECT_THAT(HloValuesAt(start, /*index=*/{0, 1}),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(param1, {})));
+  EXPECT_THAT(HloValuesAt(done, /*index=*/{0}),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(start, {1, 0})));
+  EXPECT_THAT(HloValuesAt(done, /*index=*/{1}),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(start, {1, 1})));
 }
 
 TEST_F(HloDataflowAnalysisTest, AllGatherStartAndDoneWithTuple) {
@@ -3472,6 +3596,133 @@ TEST_F(GetInPlaceInputOutputPairsTest, DUSLoopFusionWithBitcast) {
   // p1 should be aliased with fusion1
   expected_pairs.push_back({HloOperandIndex{1, {}}, {}});
   EXPECT_EQ(in_place_pairs, expected_pairs);
+}
+
+TEST_F(GetInPlaceInputOutputPairsTest, RaggedAllToAll) {
+  const char* kModule = R"(
+HloModule RaggedAllToAll, is_scheduled=true
+
+ENTRY AllToAll {
+  input = f32[24,56,119] parameter(0)
+  copy-start = (f32[24,56,119], f32[24,56,119], u32[]) copy-start(input)
+  c0 = f32[] constant(0)
+  output = f32[24,56,119] broadcast(c0), dimensions={}
+  input_offsets = s32[8] parameter(1)
+  send_sizes = s32[8] parameter(2)
+  output_offsets = s32[8] parameter(3)
+  recv_sizes = s32[8] parameter(4)
+  copy-done = f32[24,56,119] copy-done(copy-start)
+  ROOT ra2a = f32[24,56,119] ragged-all-to-all(copy-done, output, input_offsets, send_sizes, output_offsets, recv_sizes), replica_groups={{0,1,2,3,4,5,6,7}}
+}
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModule));
+  HloInstruction* ragged_all_to_all =
+      module->entry_computation()->root_instruction();
+
+  auto in_place_pairs =
+      HloDataflowAnalysis::GetInPlaceInputOutputPairs(ragged_all_to_all);
+  std::vector<std::pair<HloOperandIndex, ShapeIndex>> expected_pairs;
+  expected_pairs.push_back({HloOperandIndex{1, {}}, {}});
+  EXPECT_EQ(in_place_pairs, expected_pairs);
+}
+
+// Test to check that the dataflow analysis works with a module that has scalar
+// bitcast user.
+TEST_P(HloDataflowAnalysisTest, b409416499) {
+  const char* after_layout_bitcast = R"(
+  HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(s32[1]{0:T(128)}, s32[1]{0:T(128)}, s32[1]{0:T(128)}, s32[1]{0:T(128)})->(s32[1]{0:T(128)}, s32[1]{0:T(128)}, s32[1]{0:T(128)}, s32[1]{0:T(128)})}, allow_spmd_sharding_propagation_to_parameters={false,false,false,false}, allow_spmd_sharding_propagation_to_output={true,true,true,true}, num_partitions=4
+  %region_0.13_spmd (param.1: s32[]) -> s32[] {
+    %param.1 = s32[]{:T(128)} parameter(0), metadata={op_name="jit(<unnamed wrapped function>)/jit(main)/jit(shmap_body)/while"}
+    %constant.1 = s32[]{:T(128)} constant(1)
+    ROOT %add.0 = s32[]{:T(128)} add(%param.1, %constant.1), metadata={op_name="jit(<unnamed wrapped function>)/jit(main)/jit(shmap_body)/while/body/add" source_file="third_party/py/jax/tests/shard_map_test.py" source_line=1052}
+  }
+
+  %region_1.17_spmd (param: s32[]) -> pred[] {
+    %param = s32[]{:T(128)} parameter(0), metadata={op_name="jit(<unnamed wrapped function>)/jit(main)/jit(shmap_body)/while"}
+    %constant = s32[]{:T(128)} constant(1)
+    ROOT %compare.0 = pred[]{:T(512)} compare(%param, %constant), direction=LT, metadata={op_name="jit(<unnamed wrapped function>)/jit(main)/jit(shmap_body)/while/cond/lt" source_file="third_party/py/jax/tests/shard_map_test.py" source_line=1049}
+  }
+
+  ENTRY %main.44_spmd (param.2: s32[1], param.3: s32[1], param.4: s32[1], param.5: s32[1]) -> (s32[1], s32[1], s32[1], s32[1]) {
+    %param.2 = s32[1]{0:T(128)} parameter(0), sharding={devices=[4]<=[4]}, metadata={op_name="args[0]"}
+    %bitcast.2 = s32[]{:T(128)} bitcast(%param.2), metadata={op_name="jit(<unnamed wrapped function>)/jit(main)/jit(shmap_body)/squeeze" source_file="third_party/py/jax/tests/shard_map_test.py" source_line=1053}
+    %while.1 = s32[]{:T(128)} while(%bitcast.2), condition=%region_1.17_spmd, body=%region_0.13_spmd, metadata={op_name="jit(<unnamed wrapped function>)/jit(main)/jit(shmap_body)/while" source_file="third_party/py/jax/tests/shard_map_test.py" source_line=1053}
+    %bitcast.3 = s32[1]{0:T(128)} bitcast(%while.1), metadata={op_name="jit(<unnamed wrapped function>)/jit(main)/jit(shmap_body)/broadcast_in_dim" source_file="third_party/py/jax/tests/shard_map_test.py" source_line=1053}
+    %param.3 = s32[1]{0:T(128)} parameter(1), sharding={devices=[4]<=[4]}, metadata={op_name="args[1]"}
+    %param.4 = s32[1]{0:T(128)} parameter(2), sharding={devices=[4]<=[4]}, metadata={op_name="args[2]"}
+    %param.5 = s32[1]{0:T(128)} parameter(3), sharding={devices=[4]<=[4]}, metadata={op_name="args[3]"}
+    ROOT %tuple.1 = (s32[1]{0:T(128)}, s32[1]{0:T(128)}, s32[1]{0:T(128)}, s32[1]{0:T(128)}) tuple(%bitcast.3, %param.3, %param.4, %param.5)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto after_layout_bitcast_module,
+                          ParseAndReturnVerifiedModule(after_layout_bitcast));
+  TF_ASSERT_OK_AND_ASSIGN(auto analysis,
+                          HloDataflowAnalysis::Run(*after_layout_bitcast_module,
+                                                   /*ssa_form=*/false));
+  HloInstruction* bitcast3 =
+      FindInstruction(after_layout_bitcast_module.get(), "bitcast.3");
+  HloInstruction* param2 =
+      FindInstruction(after_layout_bitcast_module.get(), "param.2");
+  HloComputation* while_body =
+      FindComputation(after_layout_bitcast_module.get(), "region_0.13_spmd");
+  HloInstruction* add0 = while_body->root_instruction();
+  std::vector<HloInstruction*> defining_instructions;
+  for (const HloValue* value :
+       analysis->GetValueSet(bitcast3, {}).TakeValues()) {
+    defining_instructions.push_back(value->defining_instruction());
+  }
+  EXPECT_THAT(defining_instructions, UnorderedElementsAre(param2, add0));
+}
+
+TEST_P(HloDataflowAnalysisTest, b409756077) {
+  const char* after_layout_bitcast = R"(
+  HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(f32[1,256,256]{2,1,0:T(8,128)})->f32[1,256,256]{2,1,0:T(8,128)}}
+  add_f32 {
+    %add_lhs = f32[] parameter(0)
+    %add_rhs = f32[] parameter(1)
+    ROOT %add = f32[] add(%add_lhs, %add_rhs)
+  }
+  
+  %while_body (param.1: f32[256,256]) -> f32[256,256] {
+    %param.1 = f32[256,256]{1,0:T(8,128)} parameter(0)
+    %constant.0 = f32[]{:T(8,128)} constant(1)
+    %constant.1 = f32[256,256]{1,0:T(8,128)} broadcast(%constant.0), dimensions={}
+    ROOT %add.0 = f32[256,256]{1,0:T(8,128)} add(%param.1, %constant.1)
+  }
+
+  %while_condition (param: f32[256,256]) -> pred[] {
+    %param.0 = f32[256,256]{1,0:T(8,128)} parameter(0)
+    %zero = f32[]{:T(8,128)} constant(0)
+    %sum_of_values_in_param = f32[]{:T(8,128)} reduce(%param.0, %zero), dimensions={0,1}, to_apply=%add_f32
+    %constant = f32[]{:T(8,128)} constant(512)
+    ROOT %compare.0 = pred[] compare(%sum_of_values_in_param, %constant), direction=LT
+  }
+
+  ENTRY %main (param.2: f32[1,256,256]) -> f32[1,256,256] {
+    %param.2 = f32[1,256,256]{2,1,0:T(8,128)} parameter(0)
+    %bitcast.2 = f32[256,256]{1,0:T(8,128)} bitcast(%param.2)
+    %while.1 = f32[256,256]{1,0:T(8,128)} while(%bitcast.2), condition=%while_condition, body=%while_body
+    ROOT %bitcast.3 = f32[1,256,256]{2,1,0:T(8,128)} bitcast(%while.1)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto after_layout_bitcast_module,
+                          ParseAndReturnVerifiedModule(after_layout_bitcast));
+  TF_ASSERT_OK_AND_ASSIGN(auto analysis,
+                          HloDataflowAnalysis::Run(*after_layout_bitcast_module,
+                                                   /*ssa_form=*/false));
+  HloInstruction* bitcast3 =
+      FindInstruction(after_layout_bitcast_module.get(), "bitcast.3");
+  HloInstruction* param2 =
+      FindInstruction(after_layout_bitcast_module.get(), "param.2");
+  HloComputation* while_body =
+      FindComputation(after_layout_bitcast_module.get(), "while_body");
+  HloInstruction* add0 = while_body->root_instruction();
+  std::vector<HloInstruction*> defining_instructions;
+  for (const HloValue* value :
+       analysis->GetValueSet(bitcast3, {}).TakeValues()) {
+    defining_instructions.push_back(value->defining_instruction());
+  }
+  EXPECT_THAT(defining_instructions, UnorderedElementsAre(param2, add0));
 }
 
 }  // namespace

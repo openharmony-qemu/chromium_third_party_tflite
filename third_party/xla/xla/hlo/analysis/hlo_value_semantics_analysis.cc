@@ -24,7 +24,6 @@ limitations under the License.
 #include <numeric>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -38,6 +37,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -50,8 +50,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/side_effect_util.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -385,11 +383,6 @@ absl::Status EinsumDepthAnalysis::HandleDepthIncrementInstruction(
 
 absl::Status EinsumDepthAnalysis::HandleDot(HloInstruction* dot) {
   return HandleDepthIncrementInstruction(dot);
-}
-
-absl::Status EinsumDepthAnalysis::HandleConvolution(
-    HloInstruction* convolution) {
-  return HandleDepthIncrementInstruction(convolution);
 }
 
 absl::Status EinsumDepthAnalysis::HandleCall(HloInstruction* call) {
@@ -774,12 +767,6 @@ absl::Status EinsumHeightAnalysis::HandleDot(HloInstruction* dot) {
   return HandleHeightIncrementInstruction(dot);
 }
 
-absl::Status EinsumHeightAnalysis::HandleConvolution(
-    HloInstruction* convolution) {
-  RETURN_IF_HEIGHT_EXISTS(convolution);
-  return HandleHeightIncrementInstruction(convolution);
-}
-
 absl::Status EinsumHeightAnalysis::HandleCall(HloInstruction* call) {
   RETURN_IF_HEIGHT_EXISTS(call);
   TF_RETURN_IF_ERROR(HandleCalledComputation(*(call->called_computations()[0]),
@@ -944,7 +931,7 @@ std::string HloValueSemanticsTreeToString(
 
 HloValueSemanticsAnalysis::HloValueSemanticsAnalysis(
     const HloModule& module,
-    const absl::flat_hash_set<std::string_view>& execution_threads)
+    const absl::flat_hash_set<absl::string_view>& execution_threads)
     : module_(module), execution_threads_(execution_threads), next_id_(0) {}
 
 const HloValueSemantics* HloValueSemanticsAnalysis::GetSemantics(
@@ -969,7 +956,7 @@ int HloValueSemanticsAnalysis::GetHeight(const HloInstruction* instruction,
 absl::StatusOr<std::unique_ptr<HloValueSemanticsAnalysis>>
 HloValueSemanticsAnalysis::Run(
     const HloModule& module,
-    const absl::flat_hash_set<std::string_view>& execution_threads) {
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
   std::unique_ptr<HloValueSemanticsAnalysis> value_semantics_analysis =
       absl::WrapUnique(
           new HloValueSemanticsAnalysis(module, execution_threads));
@@ -1179,6 +1166,13 @@ const HloValueSemantics* HloValueSemanticsPropagation::AddSemantics(
   return analysis_->NewHloValueSemantics(semantics.label(), semantics.origin());
 }
 
+namespace {
+bool IsDotOrConvolution(const HloInstruction* instruction) {
+  return HloPredicateIsOp<HloOpcode::kDot, HloOpcode::kConvolution,
+                          HloOpcode::kRaggedDot>(instruction);
+}
+}  // namespace
+
 std::vector<HloValueSemanticsPropagation::EinsumAndOperandIndex>
 HloValueSemanticsPropagation::FindEinsumsWhereOriginDependsOnOther(
     const HloValueSemantics& semantics, const HloPosition& origin_dependence,
@@ -1204,10 +1198,8 @@ HloValueSemanticsPropagation::FindEinsumsWhereOriginDependsOnOther(
     if (origin.instruction->opcode() == HloOpcode::kDynamicSlice) {
       operands = operands.subspan(0, 1);
     }
-    bool is_einsum = origin.instruction->opcode() == HloOpcode::kDot ||
-                     origin.instruction->opcode() == HloOpcode::kConvolution;
     bool found_einsum = false;
-    if (is_einsum) {
+    if (IsDotOrConvolution(origin.instruction)) {
       for (int64_t operand_index = 0; operand_index < operands.size();
            ++operand_index) {
         const HloInstruction* origin_operand = operands[operand_index];
@@ -1251,9 +1243,7 @@ HloValueSemanticsPropagation::ComputeSemanticsFromStaticAndOther(
     return CopySemanticsWithNewOrigin(other_semantics, instruction);
   }
 
-  bool is_dot_or_convolution = instruction->opcode() == HloOpcode::kDot ||
-                               instruction->opcode() == HloOpcode::kConvolution;
-  if (is_dot_or_convolution &&
+  if (IsDotOrConvolution(instruction) &&
       other_semantics.label() == HloValueSemanticLabel::kActivationGradient) {
     return MaybeCreateGradientSemantics(
         instruction, HloValueSemanticLabel::kActivationGradient);
@@ -1301,10 +1291,8 @@ HloValueSemanticsPropagation::ComputeSemanticsFromWeightAndOther(
   CHECK(weight_semantics.label() == HloValueSemanticLabel::kWeight);
   CHECK(other_semantics.label() != HloValueSemanticLabel::kStatic &&
         other_semantics.label() != HloValueSemanticLabel::kRandom);
-  bool is_dot_or_convolution = instruction->opcode() == HloOpcode::kDot ||
-                               instruction->opcode() == HloOpcode::kConvolution;
   if (other_semantics.label() == HloValueSemanticLabel::kWeight) {
-    if (!is_dot_or_convolution) {
+    if (!IsDotOrConvolution(instruction)) {
       if (weight_semantics.origin() == other_semantics.origin()) {
         return CopySemantics(other_semantics);
       }
@@ -1313,7 +1301,7 @@ HloValueSemanticsPropagation::ComputeSemanticsFromWeightAndOther(
     return HloValueSemantics(HloValueSemanticLabel::kActivation,
                              {instruction, {}});
   }
-  if (!is_dot_or_convolution) {
+  if (!IsDotOrConvolution(instruction)) {
     return CopySemantics(other_semantics);
   }
   if (other_semantics.label() == HloValueSemanticLabel::kActivation) {
@@ -1362,9 +1350,7 @@ HloValueSemanticsPropagation::ComputeSemanticsFromActivationAndOther(
   CHECK(other_semantics.label() != HloValueSemanticLabel::kStatic &&
         other_semantics.label() != HloValueSemanticLabel::kRandom &&
         other_semantics.label() != HloValueSemanticLabel::kWeight);
-  bool is_dot_or_convolution = instruction->opcode() == HloOpcode::kDot ||
-                               instruction->opcode() == HloOpcode::kConvolution;
-  if (!is_dot_or_convolution) {
+  if (!IsDotOrConvolution(instruction)) {
     if (activation_semantics.origin() == other_semantics.origin()) {
       return CopySemantics(other_semantics);
     }

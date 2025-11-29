@@ -14,9 +14,7 @@ those to this list.
 """
 
 temporary_patch_list = [
-    "//third_party/triton:temporary/fix_left_shift_overflow.patch",
-    "//third_party/triton:temporary/prefetch.patch",
-    "//third_party/triton:temporary/i4_to_bf16.patch",
-    "//third_party/triton:temporary/further_mixed_precision_fix.patch",
+    "//third_party/triton:temporary/launcher_tma_arg_mask.patch",
+    "//third_party/triton:temporary/launcher_tma_tensordesc.patch",
     # Add new patches just above this line
 ]

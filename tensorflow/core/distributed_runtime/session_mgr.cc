@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service_agent.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
@@ -207,7 +208,8 @@ absl::Status SessionMgr::CreateSession(
     }
     auto device_mgr =
         std::make_unique<StaticDeviceMgr>(std::move(renamed_devices));
-    LookupLocalDevice cb = [&device_mgr](StringPiece name, Device** device) {
+    LookupLocalDevice cb = [&device_mgr](absl::string_view name,
+                                         Device** device) {
       return device_mgr->LookupDevice(name, device);
     };
     AsRemoteDevices(worker_env_->env, cluster_device_attributes, cb,
@@ -220,6 +222,7 @@ absl::Status SessionMgr::CreateSession(
     }
 
     auto graph_mgr = std::make_unique<GraphMgr>(worker_env_, device_mgr.get());
+    VLOG(1) << "Creating WorkerSession with owned DeviceMgr.";
     worker_session.reset(new WorkerSession(
         session, worker_name,
         std::unique_ptr<WorkerCacheInterface>(worker_cache),
@@ -244,6 +247,7 @@ absl::Status SessionMgr::CreateSession(
     // WorkerSession has been deleted.
     auto graph_mgr =
         std::make_unique<GraphMgr>(worker_env_, worker_env_->device_mgr);
+    VLOG(1) << "Creating WorkerSession with borrowed DeviceMgr.";
     worker_session = WorkerSession::CreateWithBorrowedDeviceMgr(
         session, worker_name,
         std::unique_ptr<WorkerCacheInterface>(worker_cache),
@@ -285,9 +289,8 @@ absl::Status SessionMgr::CreateSession(
 
     // Initialize coordination service if it is the leader.
     if (IsMultiClientLeader(server_def, coordination_config)) {
-      coordination_service_ =
-          tsl::CoordinationServiceInterface::EnableCoordinationService(
-              worker_env_->env, coordination_config, std::move(client_cache));
+      coordination_service_ = tsl::CoordinationService::Create(
+          worker_env_->env, coordination_config, std::move(client_cache));
       if (coordination_handler_ != nullptr) {
         coordination_handler_->SetServiceInstance(coordination_service_.get());
       }

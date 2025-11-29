@@ -22,16 +22,22 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/strings/escaping.h"
+#include "absl/strings/string_view.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/TypeRange.h"
 #include "mlir/Support/LLVM.h"
+#include "stablehlo/dialect/StablehloOps.h"
 
 namespace xla {
 namespace sdy {
+
+absl::string_view toStringView(mlir::StringRef sr);
 
 // Gets the "frontend_attributes" `DictionaryAttr` from `op`. If it doesn't
 // exist, return nullptr.
@@ -42,14 +48,16 @@ mlir::DictionaryAttr getFrontendAttrs(mlir::Operation* op);
 mlir::DictionaryAttr getFuncArgFrontendAttrs(mlir::func::FuncOp funcOp,
                                              unsigned int index);
 
-// Add `name` into the frontend attributes of `op` with value `value`. Note that
-// `value` will be turned into a `StringAttr`.
-void addFrontendAttribute(mlir::Operation* op, mlir::StringRef name,
+// Adds `name` into the frontend attributes of `op` with value `value`. If
+// `name` already exists, it will be overwritten. Note that `value` will be
+// turned into a `StringAttr`.
+void setFrontendAttribute(mlir::Operation* op, mlir::StringRef name,
                           mlir::Attribute value);
 
-// Add `name` into the argument at `argNum`'s frontend attributes of `funcOp`
-// with value `value`. Note that `value` will be turned into a `StringAttr`.
-void addFrontendAttribute(mlir::func::FuncOp funcOp, mlir::StringRef name,
+// Adds `name` into the argument at `argNum`'s frontend attributes of `funcOp`
+// with value `value`. If `name` already exists, it will be overwritten. Note
+// that `value` will be turned into a `StringAttr`.
+void setFrontendAttribute(mlir::func::FuncOp funcOp, mlir::StringRef name,
                           mlir::Attribute value, int64_t argNum);
 
 // Remove `attributeName` from the frontend attributes of `op`.
@@ -69,18 +77,27 @@ bool hasKey(mlir::DictionaryAttr dictAttr, mlir::StringRef key);
 
 void loadAllRequiredDialects(mlir::MLIRContext* context);
 
+// Parses `escapedValue` to an attribute of type `AttrTy`.
+template <typename AttrTy>
+AttrTy parseStringAttr(llvm::StringRef escapedValue,
+                       mlir::MLIRContext* context) {
+  std::string unescapedValue;
+  std::string error;
+  CHECK(absl::CUnescape(
+      absl::string_view(escapedValue.data(), escapedValue.size()),
+      &unescapedValue, &error))
+      << error;
+  return mlir::cast<AttrTy>(mlir::parseAttribute(unescapedValue, context));
+}
+
 // Parses `attrName` from `dictAttr` to an attribute of type `AttrTy`.
 template <typename AttrTy>
 AttrTy parseStringAttr(mlir::DictionaryAttr dictAttr,
                        llvm::StringRef attrName) {
   if (mlir::Attribute stringAttr = dictAttr.get(attrName)) {
-    std::string value;
-    std::string error;
-    CHECK(absl::CUnescape(mlir::cast<mlir::StringAttr>(stringAttr).getValue(),
-                          &value, &error))
-        << error;
-    return mlir::cast<AttrTy>(
-        mlir::parseAttribute(value, stringAttr.getContext()));
+    return parseStringAttr<AttrTy>(
+        mlir::cast<mlir::StringAttr>(stringAttr).getValue(),
+        stringAttr.getContext());
   }
   return nullptr;
 }
@@ -97,6 +114,21 @@ std::optional<AttrTy> tryGetFrontendAttr(mlir::Operation* op,
   }
   return std::nullopt;
 }
+
+// Builds a new `stablehlo.custom_call` with the same operands and attributes
+// as `op` but with new `resultTypes`.
+mlir::stablehlo::CustomCallOp cloneCustomCallWithNewResultTypes(
+    mlir::stablehlo::CustomCallOp op, mlir::TypeRange resultTypes,
+    mlir::IRRewriter& rewriter);
+
+// Whether `op` is a Python callback custom call.
+bool isPythonCallbackCustomCall(mlir::stablehlo::CustomCallOp op);
+
+// Parses `shardingsFrontendAttr` as a `TensorShardingPerValueAttr`, duplicates
+// the shardings at the specified indices, and returns the result as a string.
+std::string duplicateShardingsAtIndices(
+    mlir::StringRef shardingsFrontendAttr,
+    const llvm::BitVector& indicesToDuplicate);
 
 }  // namespace sdy
 }  // namespace xla

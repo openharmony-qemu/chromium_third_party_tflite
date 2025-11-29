@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/container/node_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
@@ -98,7 +99,12 @@ class EinsumDepthAnalysis : public DfsHloVisitorWithDefault {
   absl::Status HandleGetTupleElement(
       HloInstruction* get_tuple_element) override;
   absl::Status HandleDot(HloInstruction* dot) override;
-  absl::Status HandleConvolution(HloInstruction* convolution) override;
+  absl::Status HandleConvolution(HloInstruction* convolution) override {
+    return HandleDot(convolution);
+  }
+  absl::Status HandleRaggedDot(HloInstruction* ragged_dot) override {
+    return HandleDot(ragged_dot);
+  }
   absl::Status HandleCall(HloInstruction* call) override;
   absl::Status HandleFusion(HloInstruction* fusion) override;
   absl::Status HandleWhile(HloInstruction* xla_while) override;
@@ -154,7 +160,12 @@ class EinsumHeightAnalysis : public DfsHloVisitorWithDefault {
   absl::Status HandleGetTupleElement(
       HloInstruction* get_tuple_element) override;
   absl::Status HandleDot(HloInstruction* dot) override;
-  absl::Status HandleConvolution(HloInstruction* convolution) override;
+  absl::Status HandleConvolution(HloInstruction* convolution) override {
+    return HandleDot(convolution);
+  }
+  absl::Status HandleRaggedDot(HloInstruction* ragged_dot) override {
+    return HandleDot(ragged_dot);
+  }
   absl::Status HandleCall(HloInstruction* call) override;
   absl::Status HandleFusion(HloInstruction* fusion) override;
   absl::Status HandleWhile(HloInstruction* xla_while) override;
@@ -247,7 +258,7 @@ class HloValueSemanticsAnalysis {
  public:
   static absl::StatusOr<std::unique_ptr<HloValueSemanticsAnalysis>> Run(
       const HloModule& module,
-      const absl::flat_hash_set<std::string_view>& execution_threads = {});
+      const absl::flat_hash_set<absl::string_view>& execution_threads = {});
   virtual ~HloValueSemanticsAnalysis() = default;
   bool HasSemanticsFor(const HloInstruction* instruction) const;
   const HloValueSemantics* GetSemantics(const HloInstruction* instruction,
@@ -277,7 +288,7 @@ class HloValueSemanticsAnalysis {
   friend class HloValueSemanticsPropagation;
   explicit HloValueSemanticsAnalysis(
       const HloModule& module,
-      const absl::flat_hash_set<std::string_view>& execution_threads);
+      const absl::flat_hash_set<absl::string_view>& execution_threads);
   virtual absl::Status InitializeEinsumDepth();
   virtual absl::Status InitializeEinsumHeight();
   // We match send and recv HLOs to propagate semantics from send to recv.

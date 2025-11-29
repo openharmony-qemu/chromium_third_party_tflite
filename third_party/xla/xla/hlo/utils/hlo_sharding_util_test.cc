@@ -26,14 +26,13 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/hlo/testlib/test.h"
 #include "xla/service/dot_as_convolution_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
@@ -110,6 +109,34 @@ TEST(HloShardingUtilTest, MergeShardingIfCompatible8) {
   EXPECT_TRUE(MergeShardingIfCompatible(to_merge, &dst));
   EXPECT_EQ(dst,
             HloSharding::Tile(TileAssignment({2, 4}, {2, 2, 2}, {0, 2, 1})));
+}
+
+TEST(HloShardingUtilTest, MoveAndMergeShardingTilesPartialTile) {
+  HloSharding sharding =
+      HloSharding::PartialTile(TileAssignment({2, 3, 5, 7, 11}));
+  EXPECT_EQ(MoveAndMergeShardingTiles(sharding, 1, 3),
+            HloSharding::PartialTile(TileAssignment(
+                {2, 1, 5, 7 * 3, 11}, {2, 3, 5, 7, 11}, {0, 2, 3, 1, 4})));
+
+  EXPECT_EQ(MoveAndMergeShardingTiles(sharding, 3, 1),
+            HloSharding::PartialTile(TileAssignment(
+                {2, 3 * 7, 5, 1, 11}, {2, 3, 5, 7, 11}, {0, 1, 3, 2, 4})));
+}
+
+TEST(HloShardingUtilTest, MoveAndMergeShardingTilesSubGroup) {
+  HloSharding sharding =
+      HloSharding::Subgroup(TileAssignment({2, 3, 5, 7, 11}),
+                            {OpSharding::MANUAL, OpSharding::REPLICATED});
+  EXPECT_EQ(
+      MoveAndMergeShardingTiles(sharding, 0, 2),
+      HloSharding::Subgroup(TileAssignment({1, 3, 5 * 2, 7, 11},
+                                           {2, 3, 5, 7, 11}, {1, 2, 0, 3, 4}),
+                            {OpSharding::MANUAL, OpSharding::REPLICATED}));
+  EXPECT_EQ(
+      MoveAndMergeShardingTiles(sharding, 2, 0),
+      HloSharding::Subgroup(TileAssignment({2 * 5, 3, 1, 7, 11},
+                                           {2, 3, 5, 7, 11}, {0, 2, 1, 3, 4}),
+                            {OpSharding::MANUAL, OpSharding::REPLICATED}));
 }
 
 TEST(HloShardingUtilTest, TransposeShardingReplicated) {
@@ -605,6 +632,42 @@ TEST(HloShardingUtilTest,
   EXPECT_EQ(result, output_sharding);
 }
 
+TEST(HloShardingUtilTest, PropagateShardingAlongDimsAndReplicateOthers1) {
+  HloSharding source_sharding = HloSharding::IotaTile({2, 3, 5, 7, 11});
+  std::vector<int64_t> source_dims = {2, 4, 1};
+  std::vector<int64_t> target_dims = {2, 1, 3};
+  int64_t target_shape_rank = 5;
+  HloSharding target_sharding = PropagateShardingAlongDimsAndReplicateOthers(
+      source_sharding, source_dims, target_dims, target_shape_rank);
+  HloSharding expected = HloSharding::PartialTile(
+      TileAssignment({1, 11, 5, 3, 1, 14}, {2, 3, 5, 7, 11}, {4, 2, 1, 0, 3}));
+  EXPECT_EQ(target_sharding, expected);
+}
+
+TEST(HloShardingUtilTest, PropagateShardingAlongDimsAndReplicateOthers2) {
+  HloSharding source_sharding = HloSharding::IotaTile({2, 3, 5, 7, 11});
+  std::vector<int64_t> source_dims = {0, 2, 4};
+  std::vector<int64_t> target_dims = {0, 1, 2};
+  int64_t target_shape_rank = 3;
+  HloSharding target_sharding = PropagateShardingAlongDimsAndReplicateOthers(
+      source_sharding, source_dims, target_dims, target_shape_rank);
+  HloSharding expected = HloSharding::PartialTile(
+      TileAssignment({2, 5, 11, 21}, {2, 3, 5, 7, 11}, {0, 2, 4, 1, 3}));
+  EXPECT_EQ(target_sharding, expected);
+}
+
+TEST(HloShardingUtilTest, PropagateShardingAlongDimsAndReplicateOthers3) {
+  HloSharding source_sharding = HloSharding::IotaTile({2, 3, 5, 7, 11});
+  std::vector<int64_t> source_dims = {4, 3, 1};
+  std::vector<int64_t> target_dims = {0, 1, 3};
+  int64_t target_shape_rank = 4;
+  HloSharding target_sharding = PropagateShardingAlongDimsAndReplicateOthers(
+      source_sharding, source_dims, target_dims, target_shape_rank);
+  HloSharding expected = HloSharding::PartialTile(
+      TileAssignment({11, 7, 1, 3, 10}, {2, 3, 5, 7, 11}, {4, 3, 1, 0, 2}));
+  EXPECT_EQ(target_sharding, expected);
+}
+
 TEST(HloShardingUtilTest, MergeManualSubgroupSharding) {
   TileAssignment tile_assignment({16, 4});
   std::vector<OpSharding::Type> subgroup_types = {OpSharding::MANUAL,
@@ -628,10 +691,8 @@ TEST(HloShardingUtilTest, GetManualSubgroupSharding_ManualOnly) {
   EXPECT_EQ(group_sharding.sharding.tile_assignment(), TileAssignment({1, 2}));
 
   // Expect the device groups are: {0, 2} and {1, 3}
-  EXPECT_THAT(group_sharding.device_groups[0],
-              ::testing::ElementsAreArray({0, 2}));
-  EXPECT_THAT(group_sharding.device_groups[1],
-              ::testing::ElementsAreArray({1, 3}));
+  EXPECT_EQ(group_sharding.device_groups.ToString(),
+            "devices=[2,2]<=[2,2]T(1,0)");
 }
 
 TEST(HloShardingUtilTest, GetManualSubgroupSharding_ManualAndReplicted) {
@@ -648,10 +709,8 @@ TEST(HloShardingUtilTest, GetManualSubgroupSharding_ManualAndReplicted) {
             "{devices=[1,2,2]<=[4] last_tile_dim_replicate}");
 
   // Expect the device groups are: {0, 2, 4, 6} and {1, 3, 5, 7}
-  EXPECT_THAT(group_sharding.device_groups[0],
-              ::testing::ElementsAreArray({0, 2, 4, 6}));
-  EXPECT_THAT(group_sharding.device_groups[1],
-              ::testing::ElementsAreArray({1, 3, 5, 7}));
+  EXPECT_EQ(group_sharding.device_groups.ToString(),
+            "devices=[2,4]<=[4,2]T(1,0)");
 }
 
 TEST(HloShardingUtilTest, GetManualSubgroupSharding_ReplicatedAndManual) {
@@ -668,15 +727,13 @@ TEST(HloShardingUtilTest, GetManualSubgroupSharding_ReplicatedAndManual) {
             "{devices=[1,2,2]<=[4] last_tile_dim_replicate}");
 
   // Expect the device groups are: {0, 1, 4, 5} and {2, 3, 6, 7}
-  EXPECT_THAT(group_sharding.device_groups[0],
-              ::testing::ElementsAreArray({0, 1, 4, 5}));
-  EXPECT_THAT(group_sharding.device_groups[1],
-              ::testing::ElementsAreArray({2, 3, 6, 7}));
+  EXPECT_EQ(group_sharding.device_groups.ToString(),
+            "devices=[2,4]<=[2,2,2]T(1,0,2)");
 }
 
 TEST(HloShardingUtilTest, UngroupSharding_ManualOnly) {
   HloSharding sharding = HloSharding::IotaTile({1, 2});
-  std::vector<std::vector<int64_t>> device_groups = {{0, 2}, {1, 3}};
+  DeviceGroupTileAssignment device_groups(2, 2, {2, 2}, {1, 0});
   DimensionVector group_dims = {2};
   DimensionVector group_dim_sizes = {2};
 
@@ -688,13 +745,12 @@ TEST(HloShardingUtilTest, UngroupSharding_ManualOnly) {
   HloSharding ungroup_sharding = UngroupSharding(grouped);
 
   EXPECT_EQ(ungroup_sharding.ToString(),
-            "{devices=[1,2,2]0,1,2,3 last_tile_dims={manual}}");
+            "{devices=[1,2,2]<=[4] last_tile_dims={manual}}");
 }
 
 TEST(HloShardingUtilTest, UngroupSharding_ReplicatedAndManual) {
   HloSharding sharding = HloSharding::PartialTile(TileAssignment({1, 2, 2}));
-  std::vector<std::vector<int64_t>> device_groups = {{0, 2, 4, 6},
-                                                     {1, 3, 5, 7}};
+  DeviceGroupTileAssignment device_groups(2, 4, {2, 2, 2}, {2, 0, 1});
   DimensionVector group_dims = {3};
   DimensionVector group_dim_sizes = {2};
 
@@ -707,15 +763,14 @@ TEST(HloShardingUtilTest, UngroupSharding_ReplicatedAndManual) {
   HloSharding ungroup_sharding = UngroupSharding(grouped);
   VLOG(1) << "ungroup_sharding: " << ungroup_sharding.ToString();
 
-  EXPECT_EQ(
-      ungroup_sharding.ToString(),
-      "{devices=[1,2,2,2]0,2,1,3,4,6,5,7 last_tile_dims={manual, replicated}}");
+  EXPECT_EQ(ungroup_sharding.ToString(),
+            "{devices=[1,2,2,2]<=[2,2,2]T(0,2,1) last_tile_dims={manual, "
+            "replicated}}");
 }
 
 TEST(HloShardingUtilTest, UngroupSharding_ManualAndReplicated) {
   HloSharding sharding = HloSharding::PartialTile(TileAssignment({1, 2, 2}));
-  std::vector<std::vector<int64_t>> device_groups = {{0, 1, 4, 5},
-                                                     {2, 3, 6, 7}};
+  DeviceGroupTileAssignment device_groups(2, 4, {2, 2, 2}, {1, 0, 2});
   DimensionVector group_dims = {2};
   DimensionVector group_dim_sizes = {2};
 
@@ -728,9 +783,8 @@ TEST(HloShardingUtilTest, UngroupSharding_ManualAndReplicated) {
   HloSharding ungroup_sharding = UngroupSharding(grouped);
   VLOG(1) << "ungroup_sharding: " << ungroup_sharding.ToString();
 
-  EXPECT_EQ(
-      ungroup_sharding.ToString(),
-      "{devices=[1,2,2,2]0,1,2,3,4,5,6,7 last_tile_dims={manual, replicated}}");
+  EXPECT_EQ(ungroup_sharding.ToString(),
+            "{devices=[1,2,2,2]<=[8] last_tile_dims={manual, replicated}}");
 }
 
 TEST(HloShardingUtilTest, UngroupSharding_Replicated) {
@@ -739,8 +793,7 @@ TEST(HloShardingUtilTest, UngroupSharding_Replicated) {
   DimensionVector group_dims = {3};
   DimensionVector group_dim_sizes = {2};
 
-  std::vector<std::vector<int64_t>> device_groups = {{0, 1}, {2, 3}};
-
+  DeviceGroupTileAssignment device_groups(2, 2);
   auto grouped =
       GroupedSharding(std::move(device_groups), std::move(group_dims),
                       std::move(group_dim_sizes), 2, sharding,
@@ -750,7 +803,7 @@ TEST(HloShardingUtilTest, UngroupSharding_Replicated) {
   VLOG(1) << "ungroup_sharding: " << ungroup_sharding.ToString();
 
   EXPECT_EQ(ungroup_sharding.ToString(),
-            "{devices=[1,1,2,2]0,1,2,3 last_tile_dims={manual, replicated}}");
+            "{devices=[1,1,2,2]<=[4] last_tile_dims={manual, replicated}}");
 }
 
 TEST(HloShardingUtilTest, UngroupSharding_Replicated2) {
@@ -758,7 +811,7 @@ TEST(HloShardingUtilTest, UngroupSharding_Replicated2) {
   DimensionVector group_dims = {2};
   DimensionVector group_dim_sizes = {2};
 
-  std::vector<std::vector<int64_t>> device_groups = {{0, 2}, {1, 3}};
+  DeviceGroupTileAssignment device_groups(2, 2, {2, 2}, {1, 0});
 
   auto grouped =
       GroupedSharding(std::move(device_groups), std::move(group_dims),
@@ -768,8 +821,9 @@ TEST(HloShardingUtilTest, UngroupSharding_Replicated2) {
   HloSharding ungroup_sharding = UngroupSharding(grouped);
   VLOG(1) << "ungroup_sharding: " << ungroup_sharding.ToString();
 
-  EXPECT_EQ(ungroup_sharding.ToString(),
-            "{devices=[1,1,2,2]0,2,1,3 last_tile_dims={manual, replicated}}");
+  EXPECT_EQ(
+      ungroup_sharding.ToString(),
+      "{devices=[1,1,2,2]<=[2,2]T(1,0) last_tile_dims={manual, replicated}}");
 }
 
 TEST(HloShardingUtilTest, GroupedAndUngroupedReplicatedSharding) {
@@ -779,8 +833,7 @@ TEST(HloShardingUtilTest, GroupedAndUngroupedReplicatedSharding) {
 }
 
 TEST(HloShardingUtilTest, GroupedAndUngroupedIotaSharding) {
-  std::vector<std::vector<int64_t>> device_groups = {{0, 1, 2, 3, 4, 5},
-                                                     {6, 7, 8, 9, 10, 11}};
+  DeviceGroupTileAssignment device_groups(2, 6);
   GroupedSharding group_sharding = GroupedSharding(
       device_groups, /*group_dims=*/{0}, /*group_dim_sizes=*/{2},
       /*data_rank=*/2, HloSharding::IotaTile({1, 2, 3}, {2, 3}, {1, 0}));
@@ -797,7 +850,8 @@ TEST(HloShardingUtilTest, GroupedAndUngroupedShardingWithUnsortedGroupDims) {
 }
 
 TEST(HloShardingUtilTest, UngroupShardingWithUnsortedGroupDims) {
-  GroupedSharding group_sharding({{0}, {1}, {2}, {3}}, {1, 0}, {2, 2}, 4,
+  DeviceGroupTileAssignment device_groups(4, 1);
+  GroupedSharding group_sharding(device_groups, {1, 0}, {2, 2}, 4,
                                  HloSharding::Replicate());
   EXPECT_EQ(UngroupSharding(group_sharding),
             HloSharding::IotaTile({2, 2, 1, 1}, {2, 2}, {1, 0}));
@@ -807,8 +861,7 @@ TEST(HloShardingUtilTest, DeviceGroupsDoesNotMatch) {
   HloSharding sharding = HloSharding::PartialTile(TileAssignment({2, 2}));
   DimensionVector group_dim_sizes = {2};
 
-  std::vector<std::vector<int64_t>> lhs_device_groups = {{0, 2, 4, 6},
-                                                         {1, 3, 5, 7}};
+  DeviceGroupTileAssignment lhs_device_groups(2, 4, {2, 2, 2}, {2, 0, 1});
   DimensionVector lhs_group_dims = {3};
 
   auto lhs =
@@ -816,8 +869,7 @@ TEST(HloShardingUtilTest, DeviceGroupsDoesNotMatch) {
                       group_dim_sizes, 2, sharding,
                       /*subgroup_manual=*/true);
 
-  std::vector<std::vector<int64_t>> rhs_device_groups = {{0, 1, 4, 5},
-                                                         {2, 3, 6, 7}};
+  DeviceGroupTileAssignment rhs_device_groups(2, 4, {2, 2, 2}, {1, 0, 2});
   DimensionVector rhs_group_dims = {2};
 
   auto rhs =
@@ -832,7 +884,7 @@ TEST(HloShardingUtilTest, DeviceGroupsMatch) {
   HloSharding lhs_sharding = HloSharding::Replicate();
   DimensionVector group_dims = {2};
   DimensionVector group_dim_sizes = {2};
-  std::vector<std::vector<int64_t>> device_groups = {{0, 2}, {1, 3}};
+  DeviceGroupTileAssignment device_groups(2, 2, {2, 2}, {1, 0});
 
   auto lhs = GroupedSharding(
       device_groups, DimensionVector(group_dims.begin(), group_dims.end()),
@@ -1013,47 +1065,50 @@ TEST(HloShardingUtilTest, IsSubTilingOrEqualShardingShortcut7) {
   }
 }
 
-TEST(HloShardingUtilTest, IsSortOperandShardingMovableRankTwoOneFreeDim) {
-  HloIotaInstruction iota(ShapeUtil::MakeShape(F32, {8, 128}), 1);
-  iota.set_sharding(HloSharding::IotaTile({1, 2}));
-  EXPECT_TRUE(IsSortOperandShardingMovable(&iota, 1));
+TEST(HloShardingUtilTest, GetFirstTargetDimToMoveShardingTiles1) {
+  Shape shape = ShapeUtil::MakeShape(F32, {1, 8, 128, 128});
+  HloSharding sharding = HloSharding::IotaTile({8, 1, 2, 16});
+  EXPECT_FALSE(
+      GetFirstTargetDimToMoveShardingTiles(shape, sharding, 0).has_value());
+  EXPECT_FALSE(
+      GetFirstTargetDimToMoveShardingTiles(shape, sharding, 1).has_value());
+  EXPECT_EQ(GetFirstTargetDimToMoveShardingTiles(shape, sharding, 2), 1);
+  EXPECT_EQ(GetFirstTargetDimToMoveShardingTiles(shape, sharding, 3), 2);
 }
 
-TEST(HloShardingUtilTest,
-     IsSortOperandShardingMovableRankTwoOneFreeDimOfSize1) {
-  HloIotaInstruction iota(ShapeUtil::MakeShape(F32, {1, 128}), 1);
-  iota.set_sharding(HloSharding::IotaTile({1, 2}));
-  EXPECT_FALSE(IsSortOperandShardingMovable(&iota, 1));
+TEST(HloShardingUtilTest, GetFirstTargetDimToMoveShardingTiles2) {
+  Shape shape = ShapeUtil::MakeShape(F32, {4, 8, 128, 128});
+  HloSharding sharding = HloSharding::IotaTile({2, 2, 4, 16});
+  EXPECT_EQ(GetFirstTargetDimToMoveShardingTiles(shape, sharding, 0), 1);
+  EXPECT_EQ(GetFirstTargetDimToMoveShardingTiles(shape, sharding, 1), 0);
+  EXPECT_EQ(GetFirstTargetDimToMoveShardingTiles(shape, sharding, 2), 1);
+  EXPECT_EQ(GetFirstTargetDimToMoveShardingTiles(shape, sharding, 3), 2);
 }
 
-TEST(HloShardingUtilTest, IsSortOperandShardingMovableRankTwoNoFreeDims) {
-  HloIotaInstruction iota(ShapeUtil::MakeShape(F32, {8, 128}), 1);
-  iota.set_sharding(HloSharding::IotaTile({2, 2}));
-  EXPECT_FALSE(IsSortOperandShardingMovable(&iota, 1));
+TEST(HloShardingUtilTest, GetFirstTargetDimToMoveShardingTiles3) {
+  Shape shape = ShapeUtil::MakeShape(F32, {1, 128});
+  HloSharding sharding = HloSharding::IotaTile({1, 2});
+  EXPECT_FALSE(
+      GetFirstTargetDimToMoveShardingTiles(shape, sharding, 0).has_value());
+  EXPECT_FALSE(
+      GetFirstTargetDimToMoveShardingTiles(shape, sharding, 1).has_value());
 }
 
-TEST(HloShardingUtilTest, IsSortOperandShardingMovableRankOne) {
-  HloIotaInstruction iota(ShapeUtil::MakeShape(F32, {1024}), 1);
-  iota.set_sharding(
-      HloSharding::Tile(TileAssignment(std::initializer_list<int64_t>{2})));
-  EXPECT_FALSE(IsSortOperandShardingMovable(&iota, 0));
+TEST(HloShardingUtilTest, GetFirstTargetDimToMoveShardingTilesRankOne) {
+  Shape shape = ShapeUtil::MakeShape(F32, {1024});
+  HloSharding sharding =
+      HloSharding::Tile(TileAssignment(std::initializer_list<int64_t>{2}));
+  EXPECT_FALSE(
+      GetFirstTargetDimToMoveShardingTiles(shape, sharding, 0).has_value());
 }
 
-TEST(HloShardingUtilTest, IsSortOperandShardingMovableNoSharding) {
-  HloIotaInstruction iota(ShapeUtil::MakeShape(F32, {1024}), 1);
-  EXPECT_FALSE(IsSortOperandShardingMovable(&iota, 0));
-}
-
-TEST(HloShardingUtilTest, IsSortOperandShardingMovableReplicated) {
-  HloIotaInstruction iota(ShapeUtil::MakeShape(F32, {8, 128}), 1);
-  iota.set_sharding(HloSharding::Replicate());
-  EXPECT_FALSE(IsSortOperandShardingMovable(&iota, 1));
-}
-
-TEST(HloShardingUtilTest, IsSortOperandShardingMovableSortDimUnsharded) {
-  HloIotaInstruction iota(ShapeUtil::MakeShape(F32, {8, 128}), 1);
-  iota.set_sharding(HloSharding::IotaTile({1, 2}));
-  EXPECT_FALSE(IsSortOperandShardingMovable(&iota, 0));
+TEST(HloShardingUtilTest, GetFirstTargetDimToMoveShardingTilesReplicated) {
+  Shape shape = ShapeUtil::MakeShape(F32, {8, 128});
+  HloSharding sharding = HloSharding::Replicate();
+  EXPECT_FALSE(
+      GetFirstTargetDimToMoveShardingTiles(shape, sharding, 0).has_value());
+  EXPECT_FALSE(
+      GetFirstTargetDimToMoveShardingTiles(shape, sharding, 1).has_value());
 }
 
 TEST(HloShardingUtilTest, TileShape) {

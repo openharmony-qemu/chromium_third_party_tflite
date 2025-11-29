@@ -33,9 +33,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/reduction_utils.h"
 #include "xla/shape.h"
@@ -233,30 +233,23 @@ HloFusionAnalysis::EmitterFusionKind HloFusionAnalysis::GetEmitterFusionKind()
   }
 
   if (fusion_backend_config_.kind() == kTritonFusionKind ||
-      fusion_backend_config_.kind() == kTritonGemmFusionKind) {
+      fusion_backend_config_.kind() == kTritonGemmFusionKind ||
+      fusion_backend_config_.kind() == kTritonNestedGemmFusionKind) {
     return EmitterFusionKind::kTriton;
+  }
+
+  if (fusion_backend_config_.kind() == kDynamicMemcpyFusionKind) {
+    return EmitterFusionKind::kDynamicMemcpy;
   }
 
   if (fusion_backend_config_.kind() == kCuDnnFusionKind) {
     return EmitterFusionKind::kCuDnn;
   }
 
-  if (input_output_info_.smallest_input_dtype_bits < 8 ||
-      input_output_info_.smallest_output_dtype_bits < 8) {
-    // Only loop and input slice fusions currently can handle packed
-    // inputs/outputs, due to the special handling with IrArray needed to deal
-    // with multiple values occupying a single byte.
-    if (fusion_roots_.size() > 1 &&
-        IsInputFusibleNonStridedSlices(fusion_roots_) &&
-        AllSliceInputsAreCompatible(fusion_roots_)) {
-      return EmitterFusionKind::kInputSlices;
-    }
-    return EmitterFusionKind::kLoop;
-  }
-
   std::optional<HloInstructionAdaptor> first_reduce_hero;
   for (auto [root, hero] : llvm::zip(fusion_roots_, fusion_heroes_)) {
-    if (IsRealReductionHero(root.instruction(), hero.instruction())) {
+    if (IsRealReductionHero(root.instruction(), hero.instruction(),
+                            *device_info_)) {
       first_reduce_hero = hero;
       break;
     }
@@ -268,7 +261,8 @@ HloFusionAnalysis::EmitterFusionKind HloFusionAnalysis::GetEmitterFusionKind()
       if (root == *first_reduce_hero) {
         continue;
       }
-      if (!IsRealReductionHero(root.instruction(), hero.instruction())) {
+      if (!IsRealReductionHero(root.instruction(), hero.instruction(),
+                               *device_info_)) {
         // Needs to have a compatible shape to the reduce operand (compatible
         // meaning same number of elements).
         if (ShapeUtil::ElementsIn(root.shape()) !=
@@ -322,7 +316,8 @@ const HloInstruction* HloFusionAnalysis::FindHeroReduction() const {
   // have the same shape and layout as verified by
   // `IsFusedReductionOutputConsistent()`.
   for (auto [root, hero] : llvm::zip(roots, fusion_heroes_)) {
-    if (IsRealReductionHero(root.instruction(), hero.instruction())) {
+    if (IsRealReductionHero(root.instruction(), hero.instruction(),
+                            *device_info_)) {
       return &hero.instruction();
     }
   }

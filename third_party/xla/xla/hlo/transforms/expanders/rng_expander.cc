@@ -15,21 +15,31 @@ limitations under the License.
 
 #include "xla/hlo/transforms/expanders/rng_expander.h"
 
+#include <cstdint>
+#include <iterator>
 #include <random>
+#include <tuple>
+#include <vector>
 
+#include "absl/algorithm/container.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/statusor.h"
+#include "absl/synchronization/mutex.h"
 #include "xla/hlo/builder/lib/prng.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/hlo_creation_utils.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
 namespace {
 
 int64_t GlobalRandomValue() {
-  static auto* mu = new absl::Mutex();
-  static std::mt19937_64 rng{42};
+  static auto* const mu = new absl::Mutex();
+  static std::mt19937_64 rng{8};
   absl::MutexLock l(mu);
   return rng();
 }

@@ -15,6 +15,7 @@ limitations under the License.
 #include "tensorflow/lite/optional_debug_tools.h"
 
 #include <algorithm>
+#include <memory>
 
 #include <gtest/gtest.h>
 #include "tensorflow/lite/core/interpreter.h"
@@ -68,6 +69,9 @@ TEST(OptionalDebugTools, PrintInterpreterStateWithDelegate) {
   ASSERT_TRUE(model);
 
   // Create and instantiate an interpreter with a delegate.
+  std::unique_ptr<TfLiteDelegate, decltype(&TfLiteXNNPackDelegateDelete)>
+      xnnpack_delegate(TfLiteXNNPackDelegateCreate(nullptr),
+                       TfLiteXNNPackDelegateDelete);
   std::unique_ptr<Interpreter> interpreter;
   ASSERT_EQ(
       InterpreterBuilder(
@@ -75,9 +79,6 @@ TEST(OptionalDebugTools, PrintInterpreterStateWithDelegate) {
           &interpreter),
       kTfLiteOk);
   ASSERT_EQ(interpreter->AllocateTensors(), kTfLiteOk);
-  std::unique_ptr<TfLiteDelegate, decltype(&TfLiteXNNPackDelegateDelete)>
-      xnnpack_delegate(TfLiteXNNPackDelegateCreate(nullptr),
-                       TfLiteXNNPackDelegateDelete);
   ASSERT_EQ(interpreter->ModifyGraphWithDelegate(xnnpack_delegate.get()),
             kTfLiteOk);
 

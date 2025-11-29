@@ -1,5 +1,6 @@
 """Provides build configuration for TSL"""
 
+load("@rules_python//python:py_library.bzl", "py_library")
 load("@bazel_skylib//lib:new_sets.bzl", "sets")
 load(
     "@local_config_cuda//cuda:build_defs.bzl",
@@ -23,7 +24,7 @@ load(
     "if_rocm",
 )
 load(
-    "@local_tsl//tsl/platform:rules_cc.bzl",
+    "//xla/tsl/platform:rules_cc.bzl",
     "cc_binary",
     "cc_library",
     "cc_shared_library",
@@ -33,15 +34,21 @@ load(
     "if_tensorrt",
 )
 load(
-    "@local_tsl//third_party/py/rules_pywrap:pywrap.bzl",
+    "@local_xla//third_party/py/rules_pywrap:pywrap.default.bzl",
     "use_pywrap_rules",
-    _pybind_extension = "pybind_extension",
+)
+load(
+    "//xla/tsl:package_groups.bzl",
+    "DEFAULT_LOAD_VISIBILITY",
+    "LEGACY_TSL_TSL_USERS",
 )
 
 # Internally this loads a macro, but in OSS this is a function
 # buildifier: disable=out-of-order-load
 def register_extension_info(**_kwargs):
     pass
+
+visibility(DEFAULT_LOAD_VISIBILITY + LEGACY_TSL_TSL_USERS)
 
 two_gpu_tags = ["requires-gpu-nvidia:2", "notap", "manual", "no_pip"]
 
@@ -216,7 +223,7 @@ def if_nccl(if_true, if_false = []):
     return select({
         clean_dep("//xla/tsl:no_nccl_support"): if_false,
         clean_dep("//xla/tsl:windows"): if_false,
-        clean_dep("//xla/tsl:arm"): if_false,
+        clean_dep("//xla/tsl:arm_any"): if_false,
         "//conditions:default": if_true,
     })
 
@@ -400,6 +407,8 @@ def tsl_gpu_library(deps = None, cuda_deps = None, copts = tsl_copts(), **kwargs
 
 register_extension_info(extension = tsl_gpu_library, label_regex_for_dep = "{extension_name}")
 
+CollectedDepsInfo = provider("CollectedDepsInfo", fields = ["tf_collected_deps"])
+
 # Traverse the dependency graph along the "deps" attribute of the
 # target and return a struct with one field called 'tf_collected_deps'.
 # tf_collected_deps will be the union of the deps of the current target
@@ -415,9 +424,9 @@ def _collect_deps_aspect_impl(target, ctx):  # buildifier: disable=unused-variab
         all_deps += ctx.rule.attr.roots
     for dep in all_deps:
         direct.append(dep.label)
-        if hasattr(dep, "tf_collected_deps"):
-            transitive.append(dep.tf_collected_deps)
-    return struct(tf_collected_deps = depset(direct = direct, transitive = transitive))
+        if CollectedDepsInfo in dep:
+            transitive.append(dep[CollectedDepsInfo].tf_collected_deps)
+    return CollectedDepsInfo(tf_collected_deps = depset(direct = direct, transitive = transitive))
 
 collect_deps_aspect = aspect(
     attr_aspects = ["deps", "data", "roots"],
@@ -436,9 +445,9 @@ def _check_deps_impl(ctx):
     required_deps = ctx.attr.required_deps
     disallowed_deps = ctx.attr.disallowed_deps
     for input_dep in ctx.attr.deps:
-        if not hasattr(input_dep, "tf_collected_deps"):
+        if CollectedDepsInfo not in input_dep:
             continue
-        collected_deps = sets.make(input_dep.tf_collected_deps.to_list())
+        collected_deps = sets.make(input_dep[CollectedDepsInfo].tf_collected_deps.to_list())
         for disallowed_dep in disallowed_deps:
             if sets.contains(collected_deps, disallowed_dep.label):
                 fail(
@@ -543,7 +552,7 @@ def cc_header_only_library(name, deps = [], includes = [], extra_deps = [], comp
 #
 # For:
 #   * Eigen: it's a header-only library.  Add it directly to your deps.
-#   * GRPC: add a direct dep on @com_github_grpc_grpc//:grpc++_public_hdrs.
+#   * GRPC: add a direct dep on @com_github_grpc_grpc//:grpc++.
 #
 def custom_op_cc_header_only_library(name, deps = [], includes = [], extra_deps = [], compatible_with = None, **kwargs):
     _transitive_hdrs(
@@ -809,7 +818,7 @@ def tsl_pybind_extension_opensource(
         testonly = testonly,
     )
 
-    native.py_library(
+    py_library(
         name = name,
         data = select({
             clean_dep("//xla/tsl:windows"): [pyd_file],
@@ -838,4 +847,4 @@ def tsl_extra_config_settings_targets():
     return []
 
 # TODO(b/356020232): remove after migration is done
-tsl_pybind_extension = _pybind_extension if use_pywrap_rules() else tsl_pybind_extension_opensource
+tsl_pybind_extension = tsl_pybind_extension_opensource

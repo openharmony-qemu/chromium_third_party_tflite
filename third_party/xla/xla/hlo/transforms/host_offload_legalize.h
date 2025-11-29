@@ -17,8 +17,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
@@ -32,10 +34,7 @@ class HloCostAnalysis;
 // legalization that could block that is welcome into this pass.
 class HostOffloadLegalize : public HloModulePass {
  public:
-  explicit HostOffloadLegalize(int64_t host_memory_space_color,
-                               bool after_layout)
-      : kHostMemorySpaceColor(host_memory_space_color),
-        after_layout_(after_layout) {}
+  HostOffloadLegalize() = default;
   ~HostOffloadLegalize() override = default;
 
   absl::string_view name() const override { return "host-offload-legalize"; }
@@ -46,9 +45,6 @@ class HostOffloadLegalize : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
-  const int64_t kHostMemorySpaceColor;
-  const bool after_layout_;
-
   // For any memory offloaded to the host, return the instruction which is the
   // start of such and offload. These will either be "MoveToHost" annotations or
   // entry computation parameters.

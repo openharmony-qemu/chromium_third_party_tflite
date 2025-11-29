@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <cstdint>
 #include <iosfwd>
-#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -56,6 +55,7 @@ limitations under the License.
 namespace xla {
 
 class LayoutAssignment;
+
 // Abstract base class for layout constraints. These constraint objects are
 // gathered together in LayoutConstraints object.
 class LayoutConstraint {
@@ -157,12 +157,22 @@ class ComputationLayoutConstraint : public LayoutConstraint {
                           : kComputationLayoutIsSet),
         computation_layout_(
             (computation_layout == nullptr)
-                ? ComputationLayout(computation->ComputeProgramShape(),
-                                    /*ignore_layouts=*/false)
+                ? ComputationLayout(
+                      computation->ComputeProgramShape(),
+                      // Computation callers need layout to be set and
+                      // computation parameters may miss the layout, so we
+                      // cannot rely on them and need to reset/ignore the
+                      // layout. Entry computation is special because unset
+                      // layouts there are used to indicate that the layout
+                      // should be automatically inferred.
+                      /*ignore_layouts=*/!computation->IsEntryComputation())
                 : *computation_layout) {}
 
   const ComputationLayout& computation_layout() const {
     return computation_layout_;
+  }
+  ComputationLayout* mutable_computation_layout() {
+    return &computation_layout_;
   }
   void ResetComputationLayout(const ComputationLayout& layout, int64_t priority,
                               bool prop_result_layout,
@@ -294,12 +304,9 @@ class LayoutAssignment : public HloModulePass {
                                      int64_t operand_no) const;
     const OperandLayoutConstraint* GetOperandLayoutConstraint(
         const HloInstruction* instruction, int64_t operand_no) const;
-    OperandLayoutConstraint* MutableOperandLayoutConstraint(
+    std::unique_ptr<OperandLayoutConstraint>& MutableOperandLayoutConstraint(
         const HloInstruction* instruction, int64_t operand_no);
     const ShapeLayout* ResultLayout() const;
-    OperandLayoutConstraint* InsertOperandLayoutConstraint(
-        const HloInstruction* instruction, int64_t operand_no,
-        const OperandLayoutConstraint& constraint);
     absl::Status SetResultLayout(LayoutAssignment* assignment,
                                  const Shape& shape_with_layout,
                                  int64_t priority);
@@ -317,7 +324,8 @@ class LayoutAssignment : public HloModulePass {
    private:
     // The set of OperandLayoutConstraints applied to the computation.
     using OperandConstraintKey = std::pair<const HloInstruction*, int64_t>;
-    std::map<OperandConstraintKey, OperandLayoutConstraint>
+    absl::flat_hash_map<OperandConstraintKey,
+                        std::unique_ptr<OperandLayoutConstraint>>
         operand_constraints_;
 
     HloComputation* computation_;
@@ -697,6 +705,10 @@ class LayoutAssignment : public HloModulePass {
     if (channel_layout_constraints_ != nullptr) {
       *channel_layout_constraints_ = channel_constraints_;
     }
+  }
+
+  void ResetEntryComputationLayout() {
+    *entry_computation_layout_ = saved_entry_computation_layout_;
   }
 
   // Adds constraints related to host Send/Recv instructions.

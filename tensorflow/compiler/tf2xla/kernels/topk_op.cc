@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
+
 #include "absl/status/statusor.h"
 #include "tensorflow/compiler/tf2xla/type_util.h"
 #include "tensorflow/compiler/tf2xla/xla_op_kernel.h"
@@ -43,7 +45,7 @@ class TopKOp : public XlaOpKernel {
     const absl::StatusOr<xla::Shape> input_shape_or = context->InputXlaShape(0);
     OP_REQUIRES_OK(context, input_shape_or.status());
     const xla::Shape& input_shape = *input_shape_or;
-    int last_dim = input_shape.dimensions_size() - 1;
+    int last_dim = input_shape.dimensions().size() - 1;
     int last_dim_size = input_shape.dimensions(last_dim);
 
     int64_t k;
@@ -60,7 +62,7 @@ class TopKOp : public XlaOpKernel {
     OP_REQUIRES(context, k >= 0,
                 errors::InvalidArgument("Need k >= 0, got ", k));
 
-    OP_REQUIRES(context, input_shape.dimensions_size() >= 1,
+    OP_REQUIRES(context, input_shape.dimensions().size() >= 1,
                 errors::InvalidArgument("input must be >= 1-D, got shape ",
                                         input_shape.DebugString()));
 

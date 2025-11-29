@@ -20,7 +20,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -86,7 +89,7 @@ class ReduceDecomposerVisitor : public DfsHloRewriteVisitor {
 
     std::vector<Shape> output_shapes;
     if (shape.IsTuple()) {
-      for (int i = 0; i < shape.tuple_shapes_size(); i++) {
+      for (int i = 0; i < shape.tuple_shapes().size(); i++) {
         output_shapes.push_back(ShapeUtil::GetTupleElementShape(shape, i));
         TF_RET_CHECK(output_shapes[i].layout() == output_shapes[0].layout());
       }

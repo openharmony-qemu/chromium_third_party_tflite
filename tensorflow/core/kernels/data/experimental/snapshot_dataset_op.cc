@@ -15,6 +15,8 @@ limitations under the License.
 #include "tensorflow/core/kernels/data/experimental/snapshot_dataset_op.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <random>
@@ -22,15 +24,27 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/strings/numbers.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_split.h"
+#include "absl/strings/string_view.h"
 #include "absl/time/clock.h"
+#include "absl/time/time.h"
 #include "tensorflow/core/data/hash_utils.h"
 #include "tensorflow/core/data/serialization_utils.h"
 #include "tensorflow/core/data/snapshot_utils.h"
+#include "tensorflow/core/framework/attr_value.pb.h"
 #include "tensorflow/core/framework/dataset.h"
+#include "tensorflow/core/framework/dataset_options.pb.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/stats_aggregator.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor.pb.h"  // NOLINT
+#include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/lib/core/coding.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/raw_coding.h"
@@ -925,8 +939,7 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
                    << dump_status;
     }
 
-    std::string graph_hash =
-        strings::StrCat(strings::Hex(hash, strings::kZeroPad16));
+    std::string graph_hash = absl::StrCat(absl::Hex(hash, absl::kZeroPad16));
     LOG(INFO) << "Graph def serialized to hash: " << graph_hash;
 
     *output = new Dataset(ctx, input, path, graph_hash, reader_path_prefix_,
@@ -1507,7 +1520,7 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
               buffer_.push_back(std::move(elem));
               num_elements_read_++;
               cond_var_.notify_all();
-            } else if (errors::IsOutOfRange(s)) {
+            } else if (absl::IsOutOfRange(s)) {
               return absl::OkStatus();
             } else {
               return s;
@@ -1653,8 +1666,7 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
               hash_dir_(hash_dir),
               run_id_(run_id) {
           if (run_id_.empty()) {
-            run_id_ = strings::StrCat(
-                strings::Hex(random::New64(), strings::kZeroPad4));
+            run_id_ = absl::StrCat(absl::Hex(random::New64(), absl::kZeroPad4));
           }
           run_dir_ =
               io::JoinPath(dataset()->writer_path_prefix_, hash_dir_, run_id_);
@@ -1914,7 +1926,7 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
               absl::StrSplit(split_filename.back(), '.');
           std::string max_num_str = split_snapshot_filename[0];
           uint64 max_num;
-          if (!strings::safe_strtou64(max_num_str, &max_num)) {
+          if (!absl::SimpleAtoi(max_num_str, &max_num)) {
             return errors::Internal("Could not parse: ", max_num, " as uint64");
           }
           next_file_index_ = max_num + 1;

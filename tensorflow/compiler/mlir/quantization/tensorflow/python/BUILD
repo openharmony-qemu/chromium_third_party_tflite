@@ -1,4 +1,4 @@
-load("@local_tsl//tsl/platform:build_config_root.bzl", "if_pywrap")
+load("@local_xla//xla/tsl/platform:build_config_root.bzl", "if_pywrap")
 load("//tensorflow:pytype.default.bzl", "pytype_strict_library")
 load(
     "//tensorflow:tensorflow.default.bzl",
@@ -76,9 +76,9 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
-        "@local_tsl//tsl/platform:errors",
         "@local_tsl//tsl/platform:path",
-        "@local_tsl//tsl/platform:statusor",
+        "@local_xla//xla/tsl/platform:errors",
+        "@local_xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -152,10 +152,10 @@ cc_library(
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/protobuf:for_core_protos_cc",
         "//tensorflow/python/lib/core:pybind11_lib",
-        "//third_party/python_runtime:headers",  # build_cleaner: keep; Required for pybind11.
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@local_tsl//tsl/platform:protobuf",
+        "@local_xla//third_party/python_runtime:headers",  # build_cleaner: keep; Required for pybind11.
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
     ],
@@ -178,6 +178,27 @@ cc_library(
 )
 
 cc_library(
+    name = "tf_unfreeze_constants",
+    srcs = ["tf_unfreeze_constants.cc"],
+    hdrs = ["tf_unfreeze_constants.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        "//tensorflow/compiler/mlir/quantization/tensorflow:tf_passes",
+        "//tensorflow/compiler/mlir/quantization/tensorflow/cc:run_passes",
+        "//tensorflow/compiler/mlir/quantization/tensorflow/cc:save_variables",
+        "//tensorflow/core:lib",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@local_xla//xla/tsl/platform:errors",
+        "@local_xla//xla/tsl/platform:status",
+        "@local_xla//xla/tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "unfreeze_constants",
     srcs = ["unfreeze_constants.cc"],
     hdrs = ["unfreeze_constants.h"],
@@ -192,9 +213,9 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:status",
-        "@local_tsl//tsl/platform:statusor",
+        "@local_xla//xla/tsl/platform:errors",
+        "@local_xla//xla/tsl/platform:status",
+        "@local_xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -291,7 +312,6 @@ pytype_strict_library(
     srcs = [
         "quantize_model.py",
     ],
-    srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
         ":py_function_lib_py",

@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstddef>
 #include <optional>
 
+#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
@@ -25,21 +26,23 @@ limitations under the License.
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/tests/hlo_test_base.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 
 namespace xla::gpu {
 
-class DynamicSliceFusionRewriterTest : public HloTestBase {};
+class DynamicSliceFusionRewriterTest : public HloHardwareIndependentTestBase {};
 
 TEST_F(DynamicSliceFusionRewriterTest, SimpleGemm) {
   const char* hlo = R"(
@@ -938,9 +941,11 @@ TEST_F(DynamicSliceFusionRewriterTest, SimpleCustomCall) {
              /*schedule=*/CustomCallSchedule::SCHEDULE_NONE,
              /*api_version=*/CustomCallApiVersion::API_VERSION_TYPED_FFI);
   TF_ASSERT_OK_AND_ASSIGN(auto computation, b.Build());
-  xla::HloModuleConfig hlo_config(
-      xla::ProgramShape(computation.proto().host_program_shape()),
-      /*ignore_layouts=*/false);
+  TF_ASSERT_OK_AND_ASSIGN(
+      ProgramShape program_shape,
+      ProgramShape::FromProto(computation.proto().host_program_shape()));
+  xla::HloModuleConfig hlo_config(program_shape,
+                                  /*ignore_layouts=*/false);
   DebugOptions debug_options = GetDebugOptionsForTest();
   debug_options.set_xla_gpu_enable_dynamic_slice_fusion(false);
   hlo_config.set_debug_options(debug_options);
@@ -973,8 +978,8 @@ TEST_F(DynamicSliceFusionRewriterTest, SimpleCustomCall) {
                             expected);
 }
 
-void Callback_Void(se::gpu::GpuStreamHandle stream, void** buffers,
-                   const char* /*opaque*/, size_t /*opaque_len*/) {}
+void Callback_Void(void* stream, void** buffers, const char* /*opaque*/,
+                   size_t /*opaque_len*/) {}
 
 XLA_REGISTER_CUSTOM_CALL_TARGET(Callback_Void, "gpu");
 
@@ -986,9 +991,11 @@ TEST_F(DynamicSliceFusionRewriterTest, SimpleCustomCallLegacy) {
                     {128}, {1})},
              ShapeUtil::MakeShape(F32, {128}), /*opaque=*/"");
   TF_ASSERT_OK_AND_ASSIGN(auto computation, b.Build());
-  xla::HloModuleConfig hlo_config(
-      xla::ProgramShape(computation.proto().host_program_shape()),
-      /*ignore_layouts=*/false);
+  TF_ASSERT_OK_AND_ASSIGN(
+      ProgramShape program_shape,
+      ProgramShape::FromProto(computation.proto().host_program_shape()));
+  xla::HloModuleConfig hlo_config(program_shape,
+                                  /*ignore_layouts=*/false);
   DebugOptions debug_options = GetDebugOptionsForTest();
   debug_options.set_xla_gpu_enable_dynamic_slice_fusion(false);
   hlo_config.set_debug_options(debug_options);
@@ -1046,9 +1053,11 @@ TEST_F(DynamicSliceFusionRewriterTest, TupleSliceCustomCallLegacy) {
       },
       ShapeUtil::MakeShape(F32, {128}), /*opaque=*/"");
   TF_ASSERT_OK_AND_ASSIGN(auto computation, b.Build());
-  xla::HloModuleConfig hlo_config(
-      xla::ProgramShape(computation.proto().host_program_shape()),
-      /*ignore_layouts=*/false);
+  TF_ASSERT_OK_AND_ASSIGN(
+      ProgramShape program_shape,
+      ProgramShape::FromProto(computation.proto().host_program_shape()));
+  xla::HloModuleConfig hlo_config(program_shape,
+                                  /*ignore_layouts=*/false);
   DebugOptions debug_options = GetDebugOptionsForTest();
   debug_options.set_xla_gpu_enable_dynamic_slice_fusion(false);
   hlo_config.set_debug_options(debug_options);
@@ -1118,9 +1127,11 @@ TEST_F(DynamicSliceFusionRewriterTest, TupledOutputCustomCallLegacy) {
   Tuple(&b, {GetTupleElement(GetTupleElement(custom_call, 1), 0),
              GetTupleElement(custom_call, 2)});
   TF_ASSERT_OK_AND_ASSIGN(auto computation, b.Build());
-  xla::HloModuleConfig hlo_config(
-      xla::ProgramShape(computation.proto().host_program_shape()),
-      /*ignore_layouts=*/false);
+  TF_ASSERT_OK_AND_ASSIGN(
+      ProgramShape program_shape,
+      ProgramShape::FromProto(computation.proto().host_program_shape()));
+  xla::HloModuleConfig hlo_config(program_shape,
+                                  /*ignore_layouts=*/false);
   DebugOptions debug_options = GetDebugOptionsForTest();
   debug_options.set_xla_gpu_enable_dynamic_slice_fusion(false);
   hlo_config.set_debug_options(debug_options);
@@ -1179,9 +1190,11 @@ TEST_F(DynamicSliceFusionRewriterTest, UnalignedSlice) {
       {Slice(Broadcast(ConstantR0WithType(&b, S32, 42), {17}), {1}, {17}, {1})},
       ShapeUtil::MakeShape(S32, {16}), /*opaque=*/"");
   TF_ASSERT_OK_AND_ASSIGN(auto computation, b.Build());
-  xla::HloModuleConfig hlo_config(
-      xla::ProgramShape(computation.proto().host_program_shape()),
-      /*ignore_layouts=*/false);
+  TF_ASSERT_OK_AND_ASSIGN(
+      ProgramShape program_shape,
+      ProgramShape::FromProto(computation.proto().host_program_shape()));
+  xla::HloModuleConfig hlo_config(program_shape,
+                                  /*ignore_layouts=*/false);
   DebugOptions debug_options = GetDebugOptionsForTest();
   debug_options.set_xla_gpu_enable_dynamic_slice_fusion(false);
   hlo_config.set_debug_options(debug_options);
@@ -1989,7 +2002,7 @@ TEST_F(DynamicSliceFusionRewriterTest, DUSSimpleGemmLaxScan) {
   HloModule lax_scan
 
   // This is the HLO generated for the following:
-  // 
+  //
   // inp = jax.random.uniform(jax.random.key(128), (128, 128, 128))
   // init = jnp.identity(128)
   // ans = jax.lax.scan(lambda carry, x : (init, x@carry), init, inp)
@@ -2061,31 +2074,6 @@ TEST_F(DynamicSliceFusionRewriterTest, DUSSimpleGemmLaxScan) {
   RunAndFilecheckHloRewrite(hlo, DynamicSliceFusionRewriter("gpu"), expected);
 }
 
-// Remove this when tuple support is added to dynamic slice fusion
-TEST_F(DynamicSliceFusionRewriterTest, DUSReduceScatterTupleNoTransform) {
-  const char* hlo = R"(
-  HloModule test, replica_count=2
-
-  add {
-    param_0 = f16[] parameter(0)
-    param_1 = f16[] parameter(1)
-    ROOT add.1 = f16[] add(param_0, param_1)
-  }
-
-  ENTRY main.9 {
-    param_0 = f16[128,128]{1,0} parameter(0)
-    param_1 = f16[128,128]{1,0} parameter(1)
-    param_2 = f16[128,128]{1,0} parameter(2)
-    constant_20 = u32[] constant(20)
-    constant_0 = u32[] constant(0)
-    reduce-scatter = (f16[64,128]{1,0}, f16[64,128]{1,0}) reduce-scatter(param_0, param_2), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=add
-    rs1 = get-tuple-element(reduce-scatter), index=0
-    ROOT loop_dynamic_update_slice_fusion = f16[128,128]{1,0} dynamic-update-slice(param_1, rs1, constant_20, constant_0)
-  })";
-  RunAndFilecheckHloRewrite(hlo, DynamicSliceFusionRewriter("gpu"),
-                            std::nullopt);
-}
-
 TEST_F(DynamicSliceFusionRewriterTest, ReduceScatterSlice) {
   const char* hlo = R"(
   HloModule jit_slice, replica_count=2
@@ -2142,6 +2130,128 @@ TEST_F(DynamicSliceFusionRewriterTest, ReduceScatterDynamicSlice) {
   // CHECK: ENTRY
   )";
   RunAndFilecheckHloRewrite(hlo, DynamicSliceFusionRewriter("gpu"), expected);
+}
+
+TEST_F(DynamicSliceFusionRewriterTest,
+       OffsetAsFunctionOfInductionVariableShouldFuse) {
+  const char* hlo = R"(
+    HloModule test, replica_count=2
+    add {
+      a = s32[] parameter(0)
+      b = s32[] parameter(1)
+      ROOT add = s32[] add(a, b)
+    }
+    body {
+      param.1 = (s32[], s32[32,32], s32[32,32]) parameter(0)
+      iter.1 = s32[] get-tuple-element(param.1), index=0
+      src = s32[32,32] get-tuple-element(param.1), index=1
+      dest = s32[32,32] get-tuple-element(param.1), index=2
+
+      // offset as a function of only the loop induction variable.
+      add.1 = s32[] add(iter.1, iter.1)
+      c3 = s32[] constant(3)
+      multiply.1 = s32[] multiply(add.1, c3)
+      c16 = s32[] constant(16)
+      offset.1 = s32[] subtract(multiply.1, c16)
+
+      c0 = s32[] constant(0)
+      rs = s32[16,32] reduce-scatter(src), dimensions={0}, replica_groups={{0,1}}, to_apply=add
+      dus = s32[32,32] dynamic-update-slice(dest, rs, offset.1, c0)
+      c1 = s32[] constant(1)
+      add.2 = s32[] add(iter.1, c1)
+      ROOT tuple = tuple(add.2, src, dus)
+    }
+    condition {
+      param.2 = (s32[], s32[32,32], s32[32,32]) parameter(0)
+      iter.2 = s32[] get-tuple-element(param.2), index=0
+      c16 = s32[] constant(16)
+      ROOT compare = pred[] compare(iter.2, c16), direction=LT
+    }
+    ENTRY main {
+      src = s32[32,32] parameter(0)
+      dest = s32[32,32] parameter(1)
+      c0 = s32[] constant(0)
+      tuple = (s32[], s32[32,32], s32[32,32]) tuple(c0, src, dest)
+      ROOT while = (s32[], s32[32,32], s32[32,32]) while(tuple), body=body, condition=condition
+    }
+  )";
+  RunAndFilecheckHloRewrite(hlo, DynamicSliceFusionRewriter("gpu"), R"(
+    // CHECK: dynamic-slice-fusion
+    // CHECK:    %[[rs:.+]] = {{.+}} reduce-scatter({{.+}})
+    // CHECK:    ROOT %[[dus:.+]] = {{.+}} dynamic-update-slice({{.+}})
+    // CHECK: body
+    // CHECK:   %[[fusion:.+]] = {{.+}} fusion({{.+}}), kind=kCustom, calls=%dynamic-slice-fusion,
+    // CHECK-SAME:  "fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_address_computation"
+  )");
+}
+
+TEST_F(DynamicSliceFusionRewriterTest,
+       ReduceScatterDynamicSliceAndDUSMultipleBuffersGetsFused) {
+  const char* hlo = R"(
+    HloModule test, replica_count=2
+    add {
+      a = s32[] parameter(0)
+      b = s32[] parameter(1)
+      ROOT add = s32[] add(a, b)
+    }
+    body {
+      param.1 = (s32[], s32[8,8,8], s32[8,8,8], s32[8,4,8], s32[8,4,8]) parameter(0)
+      iter.1 = s32[] get-tuple-element(param.1), index=0
+      c1 = s32[] constant(1)
+      c0 = s32[] constant(0)
+      src1 = s32[8,8,8] get-tuple-element(param.1), index=1
+      src2 = s32[8,8,8] get-tuple-element(param.1), index=2
+      dst1 = s32[8,4,8] get-tuple-element(param.1), index=3
+      dst2 = s32[8,4,8] get-tuple-element(param.1), index=4
+      ds1 = s32[1,8,8]{2,1,0} dynamic-slice(src1, iter.1, c0, c0), dynamic_slice_sizes={1,8,8}
+      ds2 = s32[1,8,8]{2,1,0} dynamic-slice(src2, iter.1, c0, c0), dynamic_slice_sizes={1,8,8}
+      rs1 = s32[8,8] bitcast(ds1)
+      rs2 = s32[8,8] bitcast(ds2)
+      rs = (s32[4,8], s32[4,8]) reduce-scatter(rs1, rs2), dimensions={0}, replica_groups={{0,1}}, to_apply=add
+      reduce-scatter1 = s32[4,8] get-tuple-element(rs), index=0
+      reduce-scatter2 = s32[4,8] get-tuple-element(rs), index=1
+      bitcast1 = s32[1,4,8] bitcast(reduce-scatter1)
+      bitcast2 = s32[1,4,8] bitcast(reduce-scatter2)
+      dus1 = s32[8,4,8] dynamic-update-slice(dst1, bitcast1, iter.1, c0, c0)
+      dus2 = s32[8,4,8] dynamic-update-slice(dst2, bitcast2, iter.1, c0, c0)
+      add = s32[] add(iter.1, c1)
+      ROOT tuple = tuple(add, src1, src2, dus1, dus2)
+    }
+    condition {
+      param.2 = (s32[], s32[8,8,8], s32[8,8,8], s32[8,4,8], s32[8,4,8]) parameter(0)
+      iter.2 = s32[] get-tuple-element(param.2), index=0
+      c8 = s32[] constant(8)
+      ROOT compare = pred[] compare(iter.2, c8), direction=LT
+    }
+    ENTRY main {
+      c0 = s32[] constant(0)
+      p1 = s32[8,8,8] parameter(0)
+      p2 = s32[8,8,8] parameter(1)
+      p3 = s32[8,4,8] parameter(2)
+      p4 = s32[8,4,8] parameter(3)
+      tuple = (s32[], s32[8,8,8], s32[8,8,8], s32[8,4,8], s32[8,4,8]) tuple(c0, p1, p2, p3, p4)
+      ROOT while = (s32[], s32[8,8,8], s32[8,8,8], s32[8,4,8], s32[8,4,8]) while(tuple), body=body, condition=condition
+    }
+  )";
+
+  // Checking for 2 dynamic-slices, their uses in reduce-scatter and their
+  // update via dus inside the fusion.
+  RunAndFilecheckHloRewrite(hlo, DynamicSliceFusionRewriter("gpu"), R"(
+    // CHECK: dynamic-slice-fusion
+    // CHECK-DAG:   %[[ds1:.+]] = {{.+}} dynamic-slice({{.+}})
+    // CHECK-DAG:   %[[ds2:.+]] = {{.+}} dynamic-slice({{.+}})
+    // CHECK-DAG:   %[[bc1:.+]] = {{.+}} bitcast(%[[ds1]])
+    // CHECK-DAG:   %[[bc2:.+]] = {{.+}} bitcast(%[[ds2]])
+    // CHECK-DAG:   %[[rs:.+]] = {{.+}} reduce-scatter(%[[bc1]], %[[bc2]])
+    // CHECK-DAG:   %[[rs1:.+]] = {{.+}} get-tuple-element(%[[rs]]), index=0
+    // CHECK-DAG:   %[[rs2:.+]] = {{.+}} get-tuple-element(%[[rs]]), index=1
+    // CHECK-DAG:   %[[bc3:.+]] = {{.+}} bitcast(%[[rs1]])
+    // CHECK-DAG:   %[[bc4:.+]] = {{.+}} bitcast(%[[rs2]])
+    // CHECK-DAG:   %[[dus1:.+]] = {{.+}} dynamic-update-slice({{.+}}, %[[bc3]], {{.+}})
+    // CHECK-DAG:   %[[dus2:.+]] = {{.+}} dynamic-update-slice({{.+}}, %[[bc4]], {{.+}})
+
+    // CHECK: body
+  )");
 }
 
 }  // namespace xla::gpu

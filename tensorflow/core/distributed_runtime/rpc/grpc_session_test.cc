@@ -346,7 +346,7 @@ TEST(GrpcSessionTest, DisableOutputPartitionGraphs) {
     RunMetadata run_metadata;
     absl::Status s = session->Run(run_options, {}, {}, {node_names[2]}, nullptr,
                                   &run_metadata);
-    EXPECT_TRUE(errors::IsInvalidArgument(s));
+    EXPECT_TRUE(absl::IsInvalidArgument(s));
     EXPECT_TRUE(
         absl::StrContains(s.message(), "disable_output_partition_graphs"));
   }
@@ -826,7 +826,7 @@ TEST(GrpcSessionTest, LongErrorMessage) {
     auto a = test::graph::Constant(&g, Tensor());
     a->set_assigned_device_name(dev_a);
     std::vector<char> long_string_buffer(1024 * 1024, 'x');
-    StringPiece long_string(long_string_buffer.data(), 1024 * 1024);
+    absl::string_view long_string(long_string_buffer.data(), 1024 * 1024);
     string name = strings::StrCat(long_string, "fantasia!");
     auto a_err = test::graph::Error(&g, a, name);
     a_err->set_assigned_device_name(dev_a);

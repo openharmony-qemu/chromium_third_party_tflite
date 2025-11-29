@@ -42,12 +42,13 @@ class HloModuleProto;
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToMlirHlo(
     mlir::MLIRContext& ctx, xla::HloModuleProto const* hlo_module,
     bool import_all_computations = false,
-    bool flatten_computation_args_result = false);
+    bool flatten_computation_args_result = false, bool emit_stablehlo = false);
 
 absl::Status ConvertHloToMlirHlo(mlir::ModuleOp module,
                                  xla::HloModuleProto const* hlo_module,
                                  bool import_all_computations = false,
-                                 bool flatten_computation_args_result = false);
+                                 bool flatten_computation_args_result = false,
+                                 bool emit_stablehlo = false);
 
 // Converts an HLO module to a MLIR module in HLO dialect.
 //
@@ -59,16 +60,13 @@ absl::Status ConvertHloToMlirHlo(mlir::ModuleOp module,
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToMlirHlo(
     mlir::MLIRContext& ctx, const xla::HloModule* hlo_module,
     bool import_all_computations = false,
-    bool flatten_computation_args_result = false);
+    bool flatten_computation_args_result = false, bool emit_stablehlo = false);
 
 absl::Status ConvertHloToMlirHlo(mlir::ModuleOp module,
                                  const xla::HloModule* hlo_module,
                                  bool import_all_computations = false,
-                                 bool flatten_computation_args_result = false);
-
-// Entrypoint for HLO to StableHLO conversion.
-absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToStablehlo(
-    mlir::MLIRContext& ctx, const xla::HloModule* hlo_module);
+                                 bool flatten_computation_args_result = false,
+                                 bool emit_stablehlo = false);
 
 }  // namespace xla
 

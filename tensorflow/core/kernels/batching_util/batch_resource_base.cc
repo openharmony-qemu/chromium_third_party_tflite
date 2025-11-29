@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/optional.h"
+#include "xla/tsl/platform/criticality.h"
 #include "tensorflow/core/common_runtime/cost_constants.h"
 #include "tensorflow/core/common_runtime/cost_measurement.h"
 #include "tensorflow/core/common_runtime/cost_measurement_registry.h"
@@ -73,7 +74,6 @@ limitations under the License.
 #include "tensorflow/core/profiler/lib/traceme.h"
 #include "tensorflow/core/profiler/lib/traceme_encode.h"
 #include "tensorflow/core/util/incremental_barrier.h"
-#include "tsl/platform/criticality.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
 
@@ -212,6 +212,17 @@ void RecordBatchDelayUsV2(int64_t batch_delay_us, const string& model_name,
       monitoring::Buckets::Exponential(1, 2, 27));
   cell->GetCell(model_name, op_name, std::to_string(batch_size))
       ->Add(static_cast<double>(batch_delay_us));
+}
+
+void RecordBatchTaskSizeSum(int32_t batch_task_size,
+                            int32_t unbatched_task_size,
+                            const string& model_name, const string& op_name) {
+  static auto* cell = tensorflow::monitoring::Counter<3>::New(
+      "/tensorflow/serving/batching/batch_task_size_sum",
+      "Tracks the sum of the task sizes in a batch.", "model_name", "op_name",
+      "is_batched");
+  cell->GetCell(model_name, op_name, "true")->IncrementBy(batch_task_size);
+  cell->GetCell(model_name, op_name, "false")->IncrementBy(unbatched_task_size);
 }
 
 void RecordBatchParamBatchTimeoutMicros(int64_t batch_timeout_micros,
@@ -694,6 +705,9 @@ absl::Status BatchResourceBase::ConcatInputTensors(
              {"padding_amount", padding_amount},
              {"disable_padding", disable_padding}});
       });
+  RecordBatchTaskSizeSum(batch.size(), unbatched_tasks_size,
+                         GetModelName(context), context->op_kernel().name());
+
   // TODO(b/316379576): Add metrics for the breakdown between the size of the
   // original batch size and the unbatched task size and update the batch size
   // to include the unbatched tasks.
@@ -1040,39 +1054,35 @@ void BatchResourceBase::ProcessFuncBatch(
       batch->task(batch->num_tasks() - 1).captured_inputs;
   args.insert(args.end(), captured_inputs.begin(), captured_inputs.end());
 
-  uint64 current_time = EnvTime::NowNanos();
-  for (int i = 0; i < batch->num_tasks(); ++i) {
-    RecordBatchDelayUs((current_time - batch->task(i).start_time) * 1e-3,
-                       model_name, last_task_context->op_kernel().name(),
-                       processed_size);
-    RecordBatchDelayUsV2((current_time - batch->task(i).start_time) * 1e-3,
-                         model_name, last_task_context->op_kernel().name(),
-                         processed_size);
-  }
+  RecordBatchDelayMetrics(
+      *batch, model_name, op_name, processed_size,
+      /*batch_schedule_time=*/absl::FromUnixNanos(EnvTime::NowNanos()),
+      GetBatchTimeout());
+
   // Releases the cleanup method here, because the callback of the function
   // library runtime will handle it now.
   finally.release();
-  ProcessFuncBatchImpl(
-      last_task, args, &combined_outputs, [&](const absl::Status& run_status) {
-        absl::Status final_status;
-        auto run_finally = gtl::MakeCleanup([&]() {
-          // We do the cleanup here as an optimization, so that
-          // it runs in the underlying TF inter-op threadpool.
-          // Running it in the threadpool, let's the ensuing
-          // ops be scheduled faster, because the executor will
-          // add them to the front of the threadpool's task
-          // queue rather than the end.
-          cleanup_fn(final_status);
-        });
-        final_status = run_status;
-        if (!final_status.ok()) {
-          return;
-        }
-        if (last_task.forced_warmup_batch_size == 0) {
-          final_status = SplitOutputTensors(combined_outputs, batch.get(),
-                                            unbatched_tasks);
-        }
-      });
+  ProcessFuncBatchImpl(last_task, args, &combined_outputs,
+                       [&](const absl::Status& run_status) {
+                         absl::Status final_status;
+                         auto run_finally = gtl::MakeCleanup([&]() {
+                           // We do the cleanup here as an optimization, so that
+                           // it runs in the underlying TF inter-op threadpool.
+                           // Running it in the threadpool, let's the ensuing
+                           // ops be scheduled faster, because the executor will
+                           // add them to the front of the threadpool's task
+                           // queue rather than the end.
+                           cleanup_fn(final_status);
+                         });
+                         final_status = run_status;
+                         if (!final_status.ok()) {
+                           return;
+                         }
+                         if (last_task.forced_warmup_batch_size == 0) {
+                           final_status = SplitOutputTensors(
+                               combined_outputs, batch.get(), unbatched_tasks);
+                         }
+                       });
 }
 
 // Processes a batch of one or more BatchTask entries.
@@ -1234,6 +1244,17 @@ absl::Status BatchResourceBase::LookupOrCreateBatcherQueue(
   return absl::OkStatus();
 }
 
+std::optional<absl::Duration> BatchResourceBase::GetBatchTimeout() const {
+  if (batcher_) {
+    return absl::Microseconds(batcher_queue_options_.batch_timeout_micros);
+  }
+  if (adaptive_batcher_) {
+    return absl::Microseconds(
+        adaptive_batcher_queue_options_.batch_timeout_micros);
+  }
+  return std::nullopt;
+}
+
 void BatchResourceBase::SplitBatchCostsAndRecordMetrics(
     const std::string& model_name, const std::string& op_name,
     const std::vector<std::unique_ptr<CostMeasurement>>&
@@ -1307,6 +1328,52 @@ void BatchResourceBase::SplitBatchCostsAndRecordMetrics(
     request_cost->RecordBatchMetrics(RequestCost::BatchMetrics{
         processed_size, static_cast<int64_t>(batch.task(i).size()),
         padding_size, batch_costs});
+  }
+}
+
+void BatchResourceBase::RecordBatchDelayMetrics(
+    const BatchResourceBase::BatchT& batch, const std::string& model_name,
+    const std::string& op_name, int64_t processed_size,
+    absl::Time batch_schedule_time,
+    std::optional<absl::Duration> batch_timeout) {
+  absl::Time earliest_task_start_time = absl::InfiniteFuture();
+  for (int i = 0; i < batch.num_tasks(); ++i) {
+    earliest_task_start_time =
+        std::min(earliest_task_start_time,
+                 absl::FromUnixNanos(batch.task(i).start_time));
+  }
+  for (int i = 0; i < batch.num_tasks(); ++i) {
+    const BatchResourceBase::BatchTask& task = batch.task(i);
+
+    const absl::Time start_time = absl::FromUnixNanos(task.start_time);
+    const absl::Duration total_scheduler_delay =
+        batch_schedule_time - start_time;
+    RecordBatchDelayUs(absl::ToInt64Microseconds(total_scheduler_delay),
+                       model_name, op_name, processed_size);
+    RecordBatchDelayUsV2(absl::ToInt64Microseconds(total_scheduler_delay),
+                         model_name, op_name, processed_size);
+
+    RequestCost* request_cost = task.request_cost;
+    // Skip recording the cost if the request_cost is null.
+    if (!request_cost) continue;
+
+    // The duration from when the task was enqueued to when the earliest task in
+    // its batch has been in the queue for a duration of batch_timeout (i.e.
+    // when the task is eligible being scheduled into a batch, regardless of the
+    // number of tasks in the queue) is considered as batching delay, and the
+    // remaining duration in the queue is considered as queueing delay.
+    const absl::Duration remaining_batch_timeout =
+        std::max(earliest_task_start_time +
+                     batch_timeout.value_or(absl::ZeroDuration()) - start_time,
+                 absl::ZeroDuration());
+    const absl::Duration batching_delay =
+        std::min(remaining_batch_timeout, total_scheduler_delay);
+    const absl::Duration queueing_delay =
+        total_scheduler_delay - batching_delay;
+    request_cost->RecordMetrics(
+        {{"batching_delay_msecs", absl::ToDoubleMilliseconds(batching_delay)},
+         {"batch_queueing_delay_msecs",
+          absl::ToDoubleMilliseconds(queueing_delay)}});
   }
 }
 
