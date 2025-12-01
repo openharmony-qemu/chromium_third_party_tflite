@@ -18,16 +18,20 @@ limitations under the License.
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -123,6 +127,11 @@ absl::StatusOr<HloInstruction*> StableSortExpander::ExpandInstruction(
     }
     sort = Cast<HloSortInstruction>(new_sort);
     iota_index = sort->operand_count() - 1;
+  } else if (sort->to_apply()->caller_instructions().size() > 1) {
+    // Even if we didn't need to add an iota, we still need to clone the
+    // comparator if it has more than one use.
+    sort->set_to_apply(
+        sort->GetModule()->AddEmbeddedComputation(sort->to_apply()->Clone()));
   }
 
   // Modify the computation to break ties using the iota operand.

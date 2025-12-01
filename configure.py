@@ -529,7 +529,9 @@ def get_from_env_or_user_or_default(environ_cp, var_name, ask_for_var,
     string value for var_name
   """
   var = environ_cp.get(var_name)
-  if not var:
+  # an intentionally empty value in the
+  # environment is not the same as no value
+  if var is None:
     var = get_input(ask_for_var)
     print('\n')
   if not var:
@@ -1125,7 +1127,7 @@ def set_system_libs_flag(environ_cp):
       syslibs = ','.join(sorted(syslibs.split()))
     write_action_env_to_bazelrc('TF_SYSTEM_LIBS', syslibs)
 
-  for varname in ('PREFIX', 'LIBDIR', 'INCLUDEDIR', 'PROTOBUF_INCLUDE_PATH'):
+  for varname in ('PREFIX', 'PROTOBUF_INCLUDE_PATH'):
     if varname in environ_cp:
       write_to_bazelrc('build --define=%s=%s' % (varname, environ_cp[varname]))
 
@@ -1236,9 +1238,14 @@ def main():
       # Get the linker version
       ld_version = run_shell([gcc_env, '-Wl,-version']).split()
 
-      ld_version_int = convert_version_to_int(ld_version[3])
+      ld_version_int = 0
+      for i in range(len(ld_version)):
+        ld_version_int = convert_version_to_int(ld_version[i])
+        if ld_version_int is not None:
+          break
+
       if ld_version_int is None:
-        ld_version_int = convert_version_to_int(ld_version[4])
+        ld_version_int = 0
 
       # Enable if 'ld' version >= 2.35
       if ld_version_int >= 2035000:

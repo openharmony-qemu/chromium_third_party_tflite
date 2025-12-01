@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "llvm/Support/CommandLine.h"
@@ -100,8 +101,9 @@ int main(int argc, char** argv) {
   };
 
   if (splitInputFile) {
-    if (failed(mlir::splitAndProcessBuffer(std::move(input), processBuffer,
-                                           output->os())))
+    if (failed(mlir::splitAndProcessBuffer(
+            std::move(input), processBuffer, output->os(),
+            mlir::kDefaultSplitMarker, mlir::kDefaultSplitMarker)))
       return 1;
   } else {
     if (failed(processBuffer(std::move(input), output->os()))) return 1;

@@ -19,7 +19,6 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
-#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -51,21 +50,29 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/framework/types.pb.h"
-#include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/tfrt/ifrt/ifrt_tensor_utils.h"
 #include "tensorflow/core/tpu/kernels/sharding_utils.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/threadpool.h"
 
 namespace tensorflow {
 namespace ifrt_serving {
 namespace {
+
+struct IndexDomainLexicographicalComparator {
+  bool operator()(const xla::ifrt::IndexDomain& a,
+                  const xla::ifrt::IndexDomain& b) const {
+    return std::lexicographical_compare(
+        a.origin().elements().begin(), a.origin().elements().end(),
+        b.origin().elements().begin(), b.origin().elements().end());
+  }
+};
 
 // Shard the given `input_tensor` into equal shapes of slices.
 //
@@ -78,7 +85,7 @@ namespace {
 // `devices` contains a list of devices flattend into the following
 // order: [slice0][replicate0], [slice0][replicate1], ..., [slice1][replicate0],
 // [slice1][replicate1], ...
-absl::StatusOr<std::vector<tsl::RCReference<xla::ifrt::Array>>>
+absl::StatusOr<std::vector<xla::ifrt::ArrayRef>>
 SplitAndCreateArraysFromHostBuffer(
     xla::ifrt::Client& ifrt_client, const tensorflow::Tensor& input_tensor,
     const std::vector<int32_t>& num_partitions_per_axis, int num_replicas,
@@ -112,7 +119,7 @@ SplitAndCreateArraysFromHostBuffer(
 
   // Fast path for output in the simple no split case.
   auto assign_or_copy_value_fn =
-      [&](const tensorflow::Tensor& input) -> Status {
+      [&](const tensorflow::Tensor& input) -> absl::Status {
     split_tensors[0] = input;
     return absl::OkStatus();
   };
@@ -154,7 +161,7 @@ SplitAndCreateArraysFromHostBuffer(
                      split_tensors.size(), " x ", num_replicas));
   }
 
-  std::vector<tsl::RCReference<xla::ifrt::Array>> arrays;
+  std::vector<xla::ifrt::ArrayRef> arrays;
   arrays.reserve(devices.size());
   TF_ASSIGN_OR_RETURN(xla::ifrt::DType dtype, ToIfrtDType(tensor_data_type));
   auto device_iter = devices.begin();
@@ -256,7 +263,7 @@ absl::StatusOr<tensorflow::Tensor> MakeTensorFromDisassembledTensors(
 }
 
 absl::StatusOr<int> VerifyIndexDomainsAndGetReplicas(
-    absl::Span<xla::ifrt::IndexDomain> index_domains,
+    absl::Span<const xla::ifrt::IndexDomain> index_domains,
     const tensorflow::TensorShape& tensor_shape) {
   if (index_domains.size() <= 1) {
     return absl::InvalidArgumentError(absl::StrCat(
@@ -286,14 +293,7 @@ absl::StatusOr<int> VerifyIndexDomainsAndGetReplicas(
   // Verify that each `IndexDomain` appear the same `num_replica` times. Since
   // shapes are the same for all `IndexDomain`, this also implies each `origin`
   // appear `num_replica` times.
-  struct IndexDomainLexicographicalComparator {
-    bool operator()(const xla::ifrt::IndexDomain& a,
-                    const xla::ifrt::IndexDomain& b) const {
-      return std::lexicographical_compare(
-          a.origin().elements().begin(), a.origin().elements().end(),
-          b.origin().elements().begin(), b.origin().elements().end());
-    }
-  };
+
   absl::btree_map<xla::ifrt::IndexDomain, int,
                   IndexDomainLexicographicalComparator>
       index_domain_counts;
@@ -312,35 +312,9 @@ absl::StatusOr<int> VerifyIndexDomainsAndGetReplicas(
     }
     unique_index_domains.push_back(index_domain);
   }
-
-  // Verify that distances of between origins of neighbouring `IndexDomain`
-  // bounded by shape. Note that unique_indexx_domains are already in sorted
-  // order.
-  auto prev_iter = unique_index_domains.begin();
-  auto next_iter = unique_index_domains.begin() + 1;
-  const auto& bounded_box = first_index_domain->shape();
-  while (prev_iter != unique_index_domains.end() &&
-         next_iter != unique_index_domains.end()) {
-    xla::ifrt::Index offset = next_iter->origin() - prev_iter->origin();
-    for (int dim = 0; dim < bounded_box.dims().size(); ++dim) {
-      if (std::abs(offset.elements()[dim]) != bounded_box.dims()[dim] &&
-          offset.elements()[dim] != 0) {
-        return absl::FailedPreconditionError(absl::StrCat(
-            "IndexDomains should not have gap or overlap, but got ",
-            prev_iter->DebugString(), " and ", next_iter->DebugString(),
-            " that have offset of ", offset.DebugString()));
-      }
-    }
-    prev_iter = next_iter;
-    next_iter++;
-  }
-
   // Verify the last `IndexDomain`'s upper end of the bound matches with the
-  // tensor shape. Together with the above check, this provides an approximation
-  // to the following two assumptions:
-  // 1. the union of all IndexDomain covers the entire global shape array with
-  // no gaps.
-  // 2. no two index_domain have any overlap.
+  // tensor shape. This provides an approximation to the assumptions that the
+  // union of all IndexDomain covers the entire global shape array with no gaps.
   std::vector<int64_t> bounded_shape;
   const auto& last_index_domain = unique_index_domains.back();
   bounded_shape.reserve(last_index_domain.shape().dims().size());
@@ -360,10 +334,9 @@ absl::StatusOr<int> VerifyIndexDomainsAndGetReplicas(
 }
 
 // A simple wrapper function to create ifrt array for one single device.
-absl::StatusOr<tsl::RCReference<xla::ifrt::Array>>
-CreateArrayFromHostTensorForSingleDevice(xla::ifrt::Client& ifrt_client,
-                                         const tensorflow::Tensor& tensor,
-                                         xla::ifrt::Device* device) {
+absl::StatusOr<xla::ifrt::ArrayRef> CreateArrayFromHostTensorForSingleDevice(
+    xla::ifrt::Client& ifrt_client, const tensorflow::Tensor& tensor,
+    xla::ifrt::Device* device) {
   TF_ASSIGN_OR_RETURN(auto dtype, ToIfrtDType(tensor.dtype()));
 
   VLOG(2) << "Make single device array for buffer slice at " << tensor.data();
@@ -382,11 +355,10 @@ CreateArrayFromHostTensorForSingleDevice(xla::ifrt::Client& ifrt_client,
       });
 }
 
-absl::StatusOr<tsl::RCReference<xla::ifrt::Array>>
-MakeAssembledArrayFromHostBuffer(
+absl::StatusOr<xla::ifrt::ArrayRef> MakeAssembledArrayFromHostBuffer(
     xla::ifrt::Client& ifrt_client, const tensorflow::Tensor& input_tensor,
     const xla::HloSharding& hlo_sharding,
-    const tsl::RCReference<xla::ifrt::DeviceList>& device_list,
+    const xla::ifrt::DeviceListRef& device_list,
     const tsl::thread::ThreadPool& thread_pool) {
   // TODO(b/316959894): use xla::HloSharding to identifying sharding axis.
   auto sharding = xla::ifrt::HloSharding::Create(
@@ -480,7 +452,7 @@ MakeAssembledArrayFromHostBuffer(
                           num_replicas, devices, thread_pool));
 
   // Re-arranged arrays back to original device order
-  std::vector<tsl::RCReference<xla::ifrt::Array>> rearranged_arrays;
+  std::vector<xla::ifrt::ArrayRef> rearranged_arrays;
   rearranged_arrays.resize(arrays.size());
   for (int i = 0; i < arrays.size(); ++i) {
     rearranged_arrays[original_device_indices[i]] = std::move(arrays[i]);
@@ -495,7 +467,7 @@ MakeAssembledArrayFromHostBuffer(
 absl::StatusOr<xla::ifrt::Future<tensorflow::Tensor>> MakeTensorFromArrayHelper(
     xla::ifrt::Client& ifrt_client, xla::ifrt::Array& input_array,
     const xla::HloSharding& hlo_sharding,
-    const tsl::RCReference<xla::ifrt::DeviceList>& device_list,
+    const xla::ifrt::DeviceListRef& device_list,
     tsl::thread::ThreadPool& thread_pool) {
   TF_ASSIGN_OR_RETURN(tensorflow::DataType data_type,
                       ToTensorDataType(input_array.dtype()));
@@ -539,10 +511,9 @@ absl::StatusOr<xla::ifrt::Future<tensorflow::Tensor>> MakeTensorFromArrayHelper(
   } else if (hlo_sharding.IsTileMaximal()) {
     // Maximal implies single device
     VLOG(1) << "Fast path for maximal";
-    TF_ASSIGN_OR_RETURN(
-        std::vector<tsl::RCReference<xla::ifrt::Array>> disassembled_array,
-        input_array.DisassembleIntoSingleDeviceArrays(
-            xla::ifrt::ArrayCopySemantics::kDonateInput));
+    TF_ASSIGN_OR_RETURN(std::vector<xla::ifrt::ArrayRef> disassembled_array,
+                        input_array.DisassembleIntoSingleDeviceArrays(
+                            xla::ifrt::ArrayCopySemantics::kDonateInput));
 
     int64_t device_id = hlo_sharding.GetUniqueDevice();
 
@@ -569,22 +540,13 @@ absl::StatusOr<xla::ifrt::Future<tensorflow::Tensor>> MakeTensorFromArrayHelper(
   TF_ASSIGN_OR_RETURN(auto index_domains,
                       ifrt_sharding->IndexDomains(ToIfrtShape(tensor_shape)));
 
-  TF_ASSIGN_OR_RETURN(int index_domain_replicas,
-                      VerifyIndexDomainsAndGetReplicas(
-                          absl::MakeSpan(index_domains), tensor_shape));
+  TF_RETURN_IF_ERROR(VerifyIndexDomainsAndGetReplicas(
+                         absl::MakeSpan(index_domains), tensor_shape)
+                         .status());
 
-  if (index_domain_replicas != 1) {
-    return absl::UnimplementedError(absl::StrCat(
-        "Subgroup replication is not supported at output. Number "
-        "of unique index main ",
-        index_domain_replicas, " is not equal to number of index domains",
-        index_domains.size()));
-  }
-
-  TF_ASSIGN_OR_RETURN(
-      std::vector<tsl::RCReference<xla::ifrt::Array>> disassembled_array,
-      input_array.DisassembleIntoSingleDeviceArrays(
-          xla::ifrt::ArrayCopySemantics::kDonateInput));
+  TF_ASSIGN_OR_RETURN(std::vector<xla::ifrt::ArrayRef> disassembled_array,
+                      input_array.DisassembleIntoSingleDeviceArrays(
+                          xla::ifrt::ArrayCopySemantics::kDonateInput));
 
   if (index_domains.size() != disassembled_array.size()) {
     return absl::FailedPreconditionError(absl::StrCat(
@@ -612,11 +574,6 @@ absl::StatusOr<xla::ifrt::Future<tensorflow::Tensor>> MakeTensorFromArrayHelper(
     num_slices *= dim_num_concats;
     num_concats.push_back(dim_num_concats);
   }
-  if (num_slices != index_domains.size()) {
-    return absl::FailedPreconditionError(
-        absl::StrCat("Expect number of slices is ", index_domains.size(),
-                     " but got ", num_slices));
-  }
 
   VLOG(2) << "Index domains: ";
   for (const auto& index_domain : index_domains) {
@@ -626,24 +583,18 @@ absl::StatusOr<xla::ifrt::Future<tensorflow::Tensor>> MakeTensorFromArrayHelper(
   // disassembled array is in device order.
   struct IndexDomainDeviceArray {
     xla::ifrt::IndexDomain index_domain;
-    tsl::RCReference<xla::ifrt::Array> array;
+    xla::ifrt::ArrayRef array;
   };
-  std::vector<IndexDomainDeviceArray> index_domain_device_arrays;
-  index_domain_device_arrays.reserve(index_domains.size());
+  // `index_domains` could have duplicate index when `replicate_on_last_tile_dim
+  // is enabled. So, we use the btreemap to remove duplicates and sort the index
+  // domains lexicographically.
+  absl::btree_map<xla::ifrt::IndexDomain, xla::ifrt::ArrayRef,
+                  IndexDomainLexicographicalComparator>
+      index_domain_device_arrays;
   for (int i = 0; i < index_domains.size(); ++i) {
-    index_domain_device_arrays.push_back(
+    index_domain_device_arrays.insert(
         {index_domains[i], disassembled_array[i]});
   }
-
-  std::sort(
-      index_domain_device_arrays.begin(), index_domain_device_arrays.end(),
-      [](const IndexDomainDeviceArray& a, const IndexDomainDeviceArray& b) {
-        return std::lexicographical_compare(
-            a.index_domain.origin().elements().begin(),
-            a.index_domain.origin().elements().end(),
-            b.index_domain.origin().elements().begin(),
-            b.index_domain.origin().elements().end());
-      });
 
   std::vector<xla::ifrt::Future<>> arrays_copy_status;
   std::vector<tensorflow::Tensor> input_tensors;
@@ -692,7 +643,7 @@ absl::StatusOr<xla::ifrt::Future<tensorflow::Tensor>> MakeTensorFromArrayHelper(
 xla::ifrt::Future<tensorflow::Tensor> MakeTensorFromArray(
     xla::ifrt::Client& ifrt_client, xla::ifrt::Array& input_array,
     const xla::HloSharding& hlo_sharding,
-    const tsl::RCReference<xla::ifrt::DeviceList>& device_list,
+    const xla::ifrt::DeviceListRef& device_list,
     tsl::thread::ThreadPool& thread_pool) {
   absl::StatusOr<xla::ifrt::Future<tensorflow::Tensor>> output_tensor_future =
       MakeTensorFromArrayHelper(ifrt_client, input_array, hlo_sharding,
@@ -704,9 +655,9 @@ xla::ifrt::Future<tensorflow::Tensor> MakeTensorFromArray(
   return *std::move(output_tensor_future);
 }
 
-absl::StatusOr<tsl::RCReference<xla::ifrt::Array>> MakeArrayFromTensor(
+absl::StatusOr<xla::ifrt::ArrayRef> MakeArrayFromTensor(
     xla::ifrt::Client& ifrt_client, const tensorflow::Tensor& input_tensor,
-    const tsl::RCReference<xla::ifrt::DeviceList>& device_list,
+    const xla::ifrt::DeviceListRef& device_list,
     const xla::HloSharding& hlo_sharding,
     const tsl::thread::ThreadPool& thread_pool) {
   VLOG(3) << "IsTiled: " << hlo_sharding.IsTiled();
@@ -762,7 +713,7 @@ absl::StatusOr<tsl::RCReference<xla::ifrt::Array>> MakeArrayFromTensor(
                                           thread_pool);
 }
 
-absl::StatusOr<tsl::RCReference<xla::ifrt::Array>> MakeArrayFromTensor(
+absl::StatusOr<xla::ifrt::ArrayRef> MakeArrayFromTensor(
     xla::ifrt::Client& ifrt_client, const tensorflow::Tensor& input_tensor,
     absl::Span<const int> device_ids, const xla::HloSharding& hlo_sharding,
     const tsl::thread::ThreadPool& thread_pool) {
@@ -777,9 +728,7 @@ absl::StatusOr<tsl::RCReference<xla::ifrt::Array>> MakeArrayFromTensor(
         ifrt_client.LookupDevice(xla::ifrt::DeviceId(device_id)));
     devices.push_back(device);
   }
-  tsl::RCReference<xla::ifrt::DeviceList> device_list(
-      xla::ifrt::BasicDeviceList::Create(
-          xla::ifrt::BasicDeviceList::Devices(devices.begin(), devices.end())));
+  xla::ifrt::DeviceListRef device_list(ifrt_client.MakeDeviceList(devices));
 
   return MakeArrayFromTensor(ifrt_client, input_tensor, device_list,
                              hlo_sharding, thread_pool);

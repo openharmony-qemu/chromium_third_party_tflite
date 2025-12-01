@@ -19,8 +19,8 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <string_view>
 #include <tuple>
+#include <variant>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -105,17 +105,10 @@ absl::StatusOr<std::unique_ptr<se::Kernel>> CreateKernel(
     uint32_t shared_mem_bytes = 0);
 
 // Runs loaded kernel on the stream with the provided arguments.
-absl::Status ExecuteKernelOnStream(const se::Kernel& kernel,
-                                   absl::Span<const se::DeviceMemoryBase> args,
-                                   const LaunchDimensions& dims,
-                                   se::Stream* stream);
-
-// Runs loaded kernel on the stream with the provided arguments.
-absl::Status ExecuteKernelOnStream(const se::Kernel& kernel,
-                                   absl::Span<const se::DeviceMemoryBase> args,
-                                   const LaunchDimensions& dims,
-                                   const se::ClusterDim& cluster_dim,
-                                   se::Stream* stream);
+absl::Status ExecuteKernelOnStream(
+    se::Kernel& kernel, absl::Span<const se::KernelArgument> args,
+    const LaunchDimensions& dims,
+    const std::optional<se::ClusterDim>& cluster_dim, se::Stream* stream);
 
 // Initializes `buffer` with random data on `stream`.
 // `rng_state` is an inout parameter for the pseudorandom generator state.
@@ -142,7 +135,7 @@ absl::StatusOr<se::dnn::DataType> GetDNNDataTypeFromPrimitiveType(
 // If deterministic output is requested, returns first (not failing) result.
 absl::StatusOr<AutotuneResult> PickBestResult(
     absl::Span<AutotuneResult const> profile_results,
-    std::optional<std::string_view> instr_str,
+    std::optional<absl::string_view> instr_str,
     HloModuleConfig hlo_module_config);
 
 // Returns whether determinism is required.

@@ -96,10 +96,6 @@ int64_t GetCompiledProgramsCount() {
   return compiled_programs_count->GetCell()->value();
 }
 
-void ResetCompiledProgramsCountForTesting() {
-  compiled_programs_count->GetCell()->IncrementBy(-GetCompiledProgramsCount());
-}
-
 void RecordXlaDeviceBinarySize(const int64_t size) {
   xla_device_binary_size->GetCell()->Set(size);
 }
@@ -111,6 +107,11 @@ void RecordGpuCompilerStacktrace() {
   std::deque<std::string> stack = absl::StrSplit(tsl_stacktrace, '\n');
   stack.pop_front();
   stack.pop_back();
+
+  const int kMaxStackDepth = 10;
+  if (stack.size() > kMaxStackDepth) {
+    stack.resize(kMaxStackDepth);
+  }
 
   // Stack traces with addresses would make too many unique streamz cells.
   // We only care about the actual call stack.

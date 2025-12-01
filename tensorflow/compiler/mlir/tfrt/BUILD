@@ -60,16 +60,10 @@ td_library(
 
 gentbl_cc_library(
     name = "runtime_fallback_ops_inc_gen",
-    tbl_outs = [
-        (
-            ["-gen-op-decls"],
-            "runtime_fallback_ops.h.inc",
-        ),
-        (
-            ["-gen-op-defs"],
-            "runtime_fallback_ops.cc.inc",
-        ),
-    ],
+    tbl_outs = {
+        "runtime_fallback_ops.h.inc": ["-gen-op-decls"],
+        "runtime_fallback_ops.cc.inc": ["-gen-op-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "runtime_fallback/runtime_fallback_ops.td",
     deps = [":runtime_fallback_ops_td_files"],
@@ -113,6 +107,8 @@ cc_library(
         "//tensorflow/core/runtime_fallback/runtime:kernel_utils",
         "//tensorflow/core/runtime_fallback/runtime:runtime_fallback_alwayslink",
         "//tensorflow/core/tfrt/utils:fallback_tensor",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
@@ -283,6 +279,7 @@ cc_library(
     deps = [
         "//tensorflow/core/platform:logging",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log",
         "@tf_runtime//:hostcontext",
     ],
 )
@@ -428,7 +425,10 @@ cc_library(
     hdrs = ["translate/tfrt_compile_options.h"],
     compatible_with = get_compatible_with_portable(),  # copybara: comment
     visibility = ["//visibility:public"],
-    deps = ["//tensorflow/core/protobuf:for_core_protos_cc"],
+    deps = [
+        "//tensorflow/core/protobuf:for_core_protos_cc",
+        "@com_google_absl//absl/strings",
+    ],
 )
 
 cc_library(
@@ -550,6 +550,7 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
         "@local_xla//xla/mlir_hlo",
+        "@stablehlo//:register",
         "@tf_runtime//:init_tfrt_dialects",
         "@tf_runtime//:print_stream_pass",
     ],

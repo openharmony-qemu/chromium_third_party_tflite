@@ -56,13 +56,13 @@ limitations under the License.
 #include "tensorflow/cc/saved_model/loader.h"
 #include "tensorflow/compiler/mlir/init_mlir.h"
 #include "tensorflow/compiler/mlir/lite/stablehlo/transforms/check_accepted_ops_pass.h"
-#include "tensorflow/compiler/mlir/lite/stablehlo/transforms/legalize_tf_passes.h"
 #include "tensorflow/compiler/mlir/lite/stablehlo/transforms/op_stat_pass.h"
 #include "tensorflow/compiler/mlir/lite/stablehlo/transforms/stablehlo_util.h"
 #include "tensorflow/compiler/mlir/lite/stablehlo/transforms/transforms.h"
 #include "tensorflow/compiler/mlir/lite/tf_to_tfl_flatbuffer.h"
 #include "tensorflow/compiler/mlir/quantization/tensorflow/passes/tf_quant_ops.h"
 #include "tensorflow/compiler/mlir/quantization/tensorflow/quantize_preprocess.h"
+#include "tensorflow/compiler/mlir/stablehlo/transforms/legalize_tf_passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/dialect_registration.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/tf_graph_optimization_pass.h"
@@ -72,12 +72,12 @@ limitations under the License.
 #include "xla/mlir/framework/transforms/passes.h"
 #include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tensorflow/core/ir/types/dialect.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/public/session.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 // Tool which lowers TensorFlow Graphs to StableHLO graphs.
 //
@@ -198,9 +198,9 @@ absl::StatusOr<OwningOpRef<mlir::ModuleOp>> ImportSavedModelOrMLIR(
                           saved_model_bundle);
 }
 
-tensorflow::Status ExportModule(mlir::ModuleOp module,
-                                const std::string& output_filename,
-                                bool elide_large_elements_attrs) {
+absl::Status ExportModule(mlir::ModuleOp module,
+                          const std::string& output_filename,
+                          bool elide_large_elements_attrs) {
   std::string error_msg;
   auto output = mlir::openOutputFile(output_filename, &error_msg);
   if (output == nullptr) {
@@ -227,8 +227,8 @@ tensorflow::Status ExportModule(mlir::ModuleOp module,
   return absl::OkStatus();
 }
 
-tensorflow::Status ConvertTFToStableHLO(
-    ModuleOp tf_module, const PassPipelineCLParser& pass_pipeline) {
+absl::Status ConvertTFToStableHLO(ModuleOp tf_module,
+                                  const PassPipelineCLParser& pass_pipeline) {
   PassManager pm(tf_module.getContext());
   if (failed(applyPassManagerCLOptions(pm))) {
     return tensorflow::errors::Aborted(
@@ -273,7 +273,7 @@ tensorflow::Status ConvertTFToStableHLO(
   return absl::OkStatus();
 }
 
-tensorflow::Status RunConverter(const PassPipelineCLParser& pass_pipeline) {
+absl::Status RunConverter(const PassPipelineCLParser& pass_pipeline) {
   DialectRegistry registry;
   registerAllDialects(registry);
   RegisterAllTensorFlowDialects(registry);

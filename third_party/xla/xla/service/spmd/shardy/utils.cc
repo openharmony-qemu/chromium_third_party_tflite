@@ -17,10 +17,13 @@ limitations under the License.
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 
-#include "absl/strings/escaping.h"
+#include "absl/log/check.h"
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Dialect/Func/Extensions/AllExtensions.h"
@@ -30,11 +33,16 @@ limitations under the License.
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/TypeRange.h"
 #include "mlir/Support/LLVM.h"
+#include "shardy/dialect/sdy/ir/dialect.h"
 #include "shardy/dialect/sdy/ir/register.h"
 #include "shardy/dialect/sdy/ir/utils.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/service/spmd/shardy/constants.h"
+#include "xla/service/spmd/shardy/extensions/mhlo_extensions.h"
 
 namespace xla {
 namespace sdy {
@@ -50,6 +58,13 @@ using ::mlir::StringRef;
 using xla::sdy::kFrontendAttributesAttr;
 
 using ::mlir::func::FuncOp;
+using ::mlir::sdy::TensorShardingAttr;
+using ::mlir::sdy::TensorShardingPerValueAttr;
+using ::mlir::stablehlo::CustomCallOp;
+
+absl::string_view toStringView(mlir::StringRef sr) {
+  return absl::string_view(sr.data(), sr.size());
+}
 
 DictionaryAttr getFrontendAttrs(Operation* op) {
   return op->getAttrOfType<DictionaryAttr>(kFrontendAttributesAttr);
@@ -65,11 +80,9 @@ namespace {
 mlir::StringAttr getStringAttribute(Attribute attr, mlir::OpBuilder& builder) {
   std::string value;
   if (auto stringAttr = mlir::dyn_cast<StringAttr>(attr)) {
-    value = stringAttr.getValue().str();
-  } else {
-    value = mlir::sdy::attributeToString(attr);
+    return stringAttr;
   }
-  return builder.getStringAttr(absl::CEscape(value));
+  return builder.getStringAttr(mlir::sdy::attributeToString(attr));
 }
 
 SmallVector<NamedAttribute> getExistingFrontendAttributes(
@@ -80,17 +93,28 @@ SmallVector<NamedAttribute> getExistingFrontendAttributes(
   }
   for (NamedAttribute entry : frontendAttributes) {
     if (entry.getName() != excludedAttribute) {
-      dictEntries.emplace_back(entry);
+      dictEntries.push_back(entry);
     }
   }
   return dictEntries;
 }
 
-void addFrontendAttribute(SmallVector<NamedAttribute>& existingAttributes,
+void setFrontendAttribute(SmallVector<NamedAttribute>& existingAttributes,
                           StringRef name, Attribute value) {
   mlir::OpBuilder builder(value.getContext());
-  existingAttributes.emplace_back(NamedAttribute(
-      builder.getStringAttr(name), getStringAttribute(value, builder)));
+  StringAttr stringValue = getStringAttribute(value, builder);
+  for (auto* it = existingAttributes.begin(); it != existingAttributes.end();
+       ++it) {
+    if (it->getName() == name) {
+      if (it->getValue() == stringValue) {
+        return;
+      }
+      existingAttributes.erase(it);
+      break;
+    }
+  }
+  existingAttributes.emplace_back(
+      NamedAttribute(builder.getStringAttr(name), stringValue));
 }
 
 void removeFrontendAttribute(
@@ -119,19 +143,19 @@ void setFuncArgFrontendAttrs(FuncOp funcOp, unsigned int index,
 
 }  // namespace
 
-void addFrontendAttribute(Operation* op, StringRef name, Attribute value) {
+void setFrontendAttribute(Operation* op, StringRef name, Attribute value) {
   SmallVector<NamedAttribute> existingAttributes =
       getExistingFrontendAttributes(getFrontendAttrs(op), "");
-  addFrontendAttribute(existingAttributes, name, value);
+  setFrontendAttribute(existingAttributes, name, value);
   setFrontendAttrs(op, existingAttributes);
 }
 
-void addFrontendAttribute(FuncOp funcOp, StringRef name, Attribute value,
+void setFrontendAttribute(FuncOp funcOp, StringRef name, Attribute value,
                           int64_t argNum) {
   SmallVector<NamedAttribute> existingAttributes =
       getExistingFrontendAttributes(getFuncArgFrontendAttrs(funcOp, argNum),
                                     "");
-  addFrontendAttribute(existingAttributes, name, value);
+  setFrontendAttribute(existingAttributes, name, value);
   setFuncArgFrontendAttrs(funcOp, argNum, existingAttributes);
 }
 
@@ -164,9 +188,54 @@ void loadAllRequiredDialects(mlir::MLIRContext* context) {
   mlir::DialectRegistry registry;
   mlir::func::registerAllExtensions(registry);
   registry.insert<mlir::mhlo::MhloDialect>();
+  registerMhloExtensions(registry);
   mlir::sdy::registerAllDialects(registry);
   context->appendDialectRegistry(registry);
   context->loadAllAvailableDialects();
+}
+
+CustomCallOp cloneCustomCallWithNewResultTypes(CustomCallOp op,
+                                               mlir::TypeRange resultTypes,
+                                               mlir::IRRewriter& rewriter) {
+  auto customCallOp = rewriter.create<CustomCallOp>(
+      op.getLoc(), resultTypes, op.getOperands(), op.getCallTargetNameAttr(),
+      op.getHasSideEffectAttr(), op.getBackendConfigAttr(),
+      op.getApiVersionAttr(), op.getCalledComputations(),
+      op.getOperandLayoutsAttr(), op.getResultLayoutsAttr(),
+      op.getOutputOperandAliases());
+  customCallOp->setDiscardableAttrs(mlir::DictionaryAttr::get(
+      op->getContext(), llvm::to_vector(op->getDiscardableAttrs())));
+  return customCallOp;
+};
+
+bool isPythonCallbackCustomCall(mlir::stablehlo::CustomCallOp op) {
+  mlir::StringRef targetName = op.getCallTargetName();
+  return targetName == kPythonCpuCallbackCustomCallTargetName ||
+         targetName == kPythonGpuCallbackCustomCallTargetName ||
+         targetName == kFFIPythonCpuCallbackCustomCallTargetName ||
+         targetName == kFFIPythonGpuCallbackCustomCallTargetName;
+}
+
+std::string duplicateShardingsAtIndices(
+    mlir::StringRef shardingsFrontendAttr,
+    const llvm::BitVector& indicesToDuplicate) {
+  auto context = std::make_unique<mlir::MLIRContext>(
+      mlir::MLIRContext::Threading::DISABLED);
+  context->loadDialect<mlir::sdy::SdyDialect>();
+  auto shardingPerValue = parseStringAttr<TensorShardingPerValueAttr>(
+      shardingsFrontendAttr, context.get());
+  CHECK(shardingPerValue);
+  SmallVector<TensorShardingAttr> newShardings;
+  newShardings.reserve(shardingPerValue.size());
+  for (auto [index, sharding] :
+       llvm::enumerate(shardingPerValue.getShardings())) {
+    newShardings.push_back(sharding);
+    if (indicesToDuplicate.test(index)) {
+      newShardings.push_back(sharding);
+    }
+  }
+  return mlir::sdy::attributeToString(
+      TensorShardingPerValueAttr::get(context.get(), newShardings));
 }
 
 }  // namespace sdy

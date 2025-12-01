@@ -37,26 +37,26 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/converter_flags.pb.h"
 #include "tensorflow/compiler/mlir/lite/model_flags.pb.h"
 #include "tensorflow/compiler/mlir/lite/python/tf_tfl_flatbuffer_helpers.h"
+#include "tensorflow/compiler/mlir/lite/quantization/common/quantization_lib/quantization_config.h"
 #include "tensorflow/compiler/mlir/lite/tf_to_tfl_flatbuffer.h"
 #include "tensorflow/compiler/mlir/lite/transforms/passes.h"
 #include "tensorflow/compiler/mlir/lite/types.pb.h"
-#include "tensorflow/compiler/mlir/quantization/common/quantization_lib/quantization_config.h"
 #include "tensorflow/compiler/mlir/quantization/tensorflow/python/py_function_lib.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/mlir_roundtrip_flags.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/graph_debug_info.pb.h"
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/platform/types.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace tensorflow {
 
 using tensorflow::quantization::PyFunctionLibrary;
 
-Status HandleInputOutputArraysWithModule(
+absl::Status HandleInputOutputArraysWithModule(
     const tflite::ModelFlags& model_flags,
     mlir::OwningOpRef<mlir::ModuleOp>* module) {
   mlir::func::FuncOp entry_function = nullptr;
@@ -132,12 +132,12 @@ Status HandleInputOutputArraysWithModule(
   return absl::OkStatus();
 }
 
-Status ConvertSavedModelToTFLiteFlatBuffer(
+absl::Status ConvertSavedModelToTFLiteFlatBuffer(
     const tflite::ModelFlags& model_flags,
     tflite::ConverterFlags& converter_flags, std::string* result,
     const PyFunctionLibrary* quantization_py_function_lib) {
   auto context = std::make_unique<mlir::MLIRContext>();
-  mlir::quant::QuantizationSpecs quant_specs;
+  mlir::TFL::QuantizationSpecs quant_specs;
 
   // Parse input arrays.
   std::vector<string> node_names;
@@ -217,18 +217,23 @@ Status ConvertSavedModelToTFLiteFlatBuffer(
   pass_config.model_origin_framework = converter_flags.model_origin_framework();
   pass_config.canonicalizing_inf_as_min_max_float =
       converter_flags.canonicalizing_inf_as_min_max_float();
+  pass_config.unsafe_fuse_dynamic_shaped_broadcast =
+      converter_flags.unsafe_fuse_dynamic_shaped_broadcast();
 
-  if (converter_flags.qdq_conversion_mode() == "STATIC") {
+  if (converter_flags.strict_qdq_mode()) {
     pass_config.quant_specs.qdq_conversion_mode =
-        mlir::quant::QDQConversionMode::kQDQStatic;
+        mlir::TFL::QDQConversionMode::kQDQStrict;
+  } else if (converter_flags.qdq_conversion_mode() == "STATIC") {
+    pass_config.quant_specs.qdq_conversion_mode =
+        mlir::TFL::QDQConversionMode::kQDQStatic;
   } else if (converter_flags.qdq_conversion_mode() == "DYNAMIC") {
     pass_config.quant_specs.qdq_conversion_mode =
-        mlir::quant::QDQConversionMode::kQDQDynamic;
+        mlir::TFL::QDQConversionMode::kQDQDynamic;
     // Need to set this or else the ops will still use floating point kernels
     pass_config.quant_specs.inference_type = tensorflow::DT_QINT8;
   } else if (converter_flags.qdq_conversion_mode() == "NONE") {
     pass_config.quant_specs.qdq_conversion_mode =
-        mlir::quant::QDQConversionMode::kQDQNone;
+        mlir::TFL::QDQConversionMode::kQDQNone;
   } else {
     return errors::InvalidArgument("Unknown QDQ conversion mode: ",
                                    converter_flags.qdq_conversion_mode());

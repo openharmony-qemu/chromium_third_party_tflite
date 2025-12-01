@@ -55,7 +55,7 @@ AttrValue TypeAttrValue(DataType type) {
   return attr_value;
 }
 
-AttrValue StringAttrValue(StringPiece str) {
+AttrValue StringAttrValue(absl::string_view str) {
   AttrValue attr_value;
   SetAttrValue(str, &attr_value);
   return attr_value;
@@ -136,7 +136,7 @@ TEST(ConvertGraphDefToXla, Sum) {
 
   config.mutable_feed(0)->mutable_id()->set_output_index(
       123); /* invalid output_index */
-  EXPECT_TRUE(errors::IsInvalidArgument(
+  EXPECT_TRUE(absl::IsInvalidArgument(
       ConvertGraphDefToXla(graph_def, config, client, &computation)));
 }
 

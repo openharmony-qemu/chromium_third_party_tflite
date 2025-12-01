@@ -363,6 +363,10 @@ class BufferIntervalTree {
   // Remove the interval from the tree. Returns true if the chunk is removed.
   bool Remove(int64_t start, int64_t end, const Chunk& chunk);
 
+  // Returns the number of allocated chunks that overlap with the given time
+  // interval.
+  int NumChunksOverlappingInTime(int64_t start, int64_t end) const;
+
   // Returns vector of allocated chunks that overlap with the given time
   // interval.
   std::vector<Chunk> ChunksOverlappingInTime(int64_t start, int64_t end) const;
@@ -415,6 +419,8 @@ class BufferIntervalTree {
   // Returns an integer denoting the largest occupied memory location in the
   // heap within the time interval [start, end].
   int64_t HeapSizeInInterval(int64_t start, int64_t end) const;
+
+  void Clear();
 
  private:
   // The BufferIntervalTreeNode objects inside the result vector are guaranteed

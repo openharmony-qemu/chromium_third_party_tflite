@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_SPMD_STATEFUL_RNG_SPMD_PARTITIONER_H_
 #define XLA_SERVICE_SPMD_STATEFUL_RNG_SPMD_PARTITIONER_H_
 
+#include <cstdint>
+#include <memory>
+#include <optional>
 #include <utility>
 
 #include "absl/container/flat_hash_set.h"
@@ -77,11 +80,6 @@ class StatefulRngSpmdPartitioner : public spmd::SpmdPartitioner {
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
-  // This adds an unsafe attribute labelling the while loop as a pipelined
-  // while loop. This attribute lets the rest of the passes ignore the
-  // computations in the pipeline bubble.
-  absl::Status HandleRotateRightWhilePreprocessing(
-      HloComputation* computation) override;
   bool CanSideEffectingHaveReplicatedSharding(
       const HloInstruction* hlo) override;
 

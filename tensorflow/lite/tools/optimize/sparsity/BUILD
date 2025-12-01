@@ -24,7 +24,7 @@ pybind_extension(
     deps = [
         "//tensorflow/lite/core/c:common",
         "//tensorflow/lite/kernels/internal/utils:sparsity_format_converter",
-        "//third_party/python_runtime:headers",  # buildcleaner: keep
+        "@local_xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@pybind11",
     ],
 )
@@ -32,7 +32,6 @@ pybind_extension(
 py_strict_test(
     name = "format_converter_wrapper_pybind11_test",
     srcs = ["format_converter_wrapper_pybind11_test.py"],
-    python_version = "PY3",
     deps = [
         ":format_converter_wrapper_pybind11",
         "@absl_py//absl/testing:absltest",

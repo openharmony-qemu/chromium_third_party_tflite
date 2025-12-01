@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/service/while_util.h"
 
 #include <memory>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -24,10 +23,10 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/utils/hlo_matchers.h"
-#include "xla/test.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
 #include "tsl/platform/statusor.h"
@@ -37,7 +36,7 @@ namespace {
 
 namespace op = ::xla::testing::opcode_matchers;
 
-class WhileUtilTest : public HloTestBase {
+class WhileUtilTest : public HloHardwareIndependentTestBase {
  protected:
   absl::StatusOr<std::unique_ptr<VerifiedHloModule>> GetParsedModule(
       HloComputation** entry_computation, HloInstruction** param0,
@@ -224,7 +223,7 @@ ENTRY main {
 }
 
 TEST_F(WhileUtilTest, TryIncrementNonCounterTripCount) {
-  constexpr std::string_view hlo = R"(
+  constexpr absl::string_view hlo = R"(
 HloModule main
 
 body {
@@ -260,7 +259,7 @@ ENTRY main {
 }
 
 TEST_F(WhileUtilTest, TryIncrementNonConstantTripCount) {
-  constexpr std::string_view hlo = R"(
+  constexpr absl::string_view hlo = R"(
 HloModule main
 
 body {
@@ -297,7 +296,7 @@ ENTRY main {
 }
 
 TEST_F(WhileUtilTest, TryIncrementSideEffecting) {
-  constexpr std::string_view hlo = R"(
+  constexpr absl::string_view hlo = R"(
 HloModule main
 
 body {
@@ -334,7 +333,7 @@ ENTRY main {
 }
 
 TEST_F(WhileUtilTest, IncrementTripCountLt) {
-  constexpr std::string_view hlo = R"(
+  constexpr absl::string_view hlo = R"(
 HloModule main
 
 body {
@@ -372,7 +371,7 @@ ENTRY main {
 }
 
 TEST_F(WhileUtilTest, IncrementTripCountGt) {
-  constexpr std::string_view hlo = R"(
+  constexpr absl::string_view hlo = R"(
 HloModule main
 
 body {

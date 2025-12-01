@@ -1,5 +1,5 @@
 ################################################################################
-FROM ubuntu:20.04@sha256:fa17826afb526a9fc7250e0fbcbfd18d03fe7a54849472f86879d8bf562c629e as builder
+FROM ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214 as builder
 ################################################################################
 
 # Install devtoolset build dependencies
@@ -75,6 +75,8 @@ RUN /setup.python.sh python3.10 devel.requirements.txt
 RUN /setup.python.sh python3.11 devel.requirements.txt
 RUN /setup.python.sh python3.12 devel.requirements.txt
 RUN /setup.python.sh python3.13 devel.requirements.txt
+# python3.13-nogil is a free-threaded build of python3.13
+RUN /setup.python.sh python3.13-nogil devel.requirements.txt
 
 FROM devel as tf
 # Setup TF Python environment.

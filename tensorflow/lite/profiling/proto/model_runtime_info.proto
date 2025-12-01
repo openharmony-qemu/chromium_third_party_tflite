@@ -19,6 +19,7 @@ package tflite.profiling;
 
 import "tensorflow/lite/profiling/proto/profiling_info.proto";
 
+option java_package = "tflite.profiling";
 option java_multiple_files = true;
 
 // Corresponds to a TFLite Model.
@@ -47,6 +48,8 @@ message RuntimeSubgraph {
   repeated int32 execution_plan = 4 [packed = true];
 
   optional SubgraphType subgraph_type = 5;
+  // The name of the subgraph.
+  optional string name = 6;
 }
 
 message Node {

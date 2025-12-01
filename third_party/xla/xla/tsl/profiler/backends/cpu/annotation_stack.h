@@ -16,9 +16,11 @@ limitations under the License.
 #define XLA_TSL_PROFILER_BACKENDS_CPU_ANNOTATION_STACK_H_
 
 #include <atomic>
-#include <string_view>
+#include <cstdint>
 
-#include "tsl/platform/types.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "xla/tsl/platform/types.h"
 
 namespace tsl {
 namespace profiler {
@@ -29,13 +31,16 @@ class AnnotationStack {
   // Appends name to the annotations for the current thread, separated by "::".
   // The choice of separator "::" is based on characters not used by TensorFlow
   // for its TensorOps.
-  static void PushAnnotation(std::string_view name);
+  static void PushAnnotation(absl::string_view name);
 
   // Resizes the annotation stack for the current thread.
   static void PopAnnotation();
 
   // Returns the annotation stack for the current thread.
   static const string& Get();
+
+  // Returns the range id sequence for the stack for the current thread.
+  static absl::Span<const int64_t> GetScopeRangeIds();
 
   // Enables or disables the annotation stack.
   static void Enable(bool enable);

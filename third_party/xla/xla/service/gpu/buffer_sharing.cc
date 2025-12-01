@@ -41,9 +41,10 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-std::optional<bool> FusionCanShareBufferHint(const HloInstruction* user,
-                                             const HloInstruction* operand,
-                                             const ShapeIndex& user_index) {
+std::optional<bool> FusionCanShareBufferHint(
+    const HloInstruction* user, const HloInstruction* operand,
+    const ShapeIndex& user_index,
+    const se::DeviceDescription& device_description) {
   const HloFusionInstruction* fusion = DynCast<HloFusionInstruction>(user);
   if (fusion == nullptr) {
     return std::nullopt;
@@ -78,14 +79,11 @@ std::optional<bool> FusionCanShareBufferHint(const HloInstruction* user,
   // Allow multiple output users, if they end in reductions.
   // This only works for the reduction emitter, as it calculates the reduction
   // first, i.e. before processing other outputs (that may overwrite the input).
-  stream_executor::GpuDeviceInfoProto device_info;
-  stream_executor::DeviceDescription device_description(device_info);
   auto analysis = HloFusionAnalysis::Create(*user, device_description);
   bool is_reduction_emitter = analysis.GetEmitterFusionKind() ==
                               HloFusionAnalysis::EmitterFusionKind::kReduction;
   const HloInstruction* reduction_hero =
-      is_reduction_emitter ? reduction_hero = analysis.FindHeroReduction()
-                           : nullptr;
+      is_reduction_emitter ? analysis.FindHeroReduction() : nullptr;
 
   // We need to make sure that the fusion parameter is accessed in the same
   // iteration order as the fusion output. Also, there should not be any other
@@ -134,7 +132,7 @@ std::optional<bool> FusionCanShareBufferHint(const HloInstruction* user,
       // the scatter inputs.
       if (hlo == non_bitcast_root && hlo->opcode() == HloOpcode::kScatter) {
         int64_t num_scatter_inputs =
-            hlo->shape().IsTuple() ? hlo->shape().tuple_shapes_size() : 1;
+            hlo->shape().IsTuple() ? hlo->shape().tuple_shapes().size() : 1;
         if (hlo->operand_index(hlo_operand) < num_scatter_inputs &&
             absl::c_count(hlo->operands(), hlo_operand) == 1) {
           continue;
@@ -220,9 +218,10 @@ std::optional<bool> FusionCanShareBufferHint(const HloInstruction* user,
   return found_path_to_output;
 }
 
-std::optional<bool> CanShareBufferHint(const HloInstruction* user,
-                                       const HloInstruction* operand,
-                                       const ShapeIndex& user_index) {
+std::optional<bool> CanShareBufferHint(
+    const HloInstruction* user, const HloInstruction* operand,
+    const ShapeIndex& user_index,
+    const se::DeviceDescription& device_description) {
   switch (user->opcode()) {
     case HloOpcode::kAllReduce:
     case HloOpcode::kCollectiveBroadcast:
@@ -244,7 +243,8 @@ std::optional<bool> CanShareBufferHint(const HloInstruction* user,
       }
       return false;
     case HloOpcode::kFusion:
-      return FusionCanShareBufferHint(user, operand, user_index);
+      return FusionCanShareBufferHint(user, operand, user_index,
+                                      device_description);
     default:
       return std::nullopt;
   }

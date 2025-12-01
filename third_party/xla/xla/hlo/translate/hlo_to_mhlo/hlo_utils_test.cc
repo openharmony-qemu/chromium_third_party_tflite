@@ -16,26 +16,25 @@ limitations under the License.
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_utils.h"
 
 #include <cstdint>
-#include <cstring>
 #include <vector>
 
+#include <gtest/gtest.h>
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/DebugStringHelper.h"
-#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
 
 TEST(ConvertTensorShapeToType, Simple) {
   mlir::MLIRContext context;
-  context.loadDialect<mlir::mhlo::MhloDialect>();
+  context.loadDialect<mlir::stablehlo::StablehloDialect>();
   mlir::Builder builder(&context);
 
   // Static shape.
@@ -60,7 +59,8 @@ TEST(ConvertTensorShapeToType, Simple) {
         ConvertTensorShapeToType<mlir::RankedTensorType>(shape, builder));
 
     int64_t bounds[] = {8, mlir::ShapedType::kDynamic};
-    auto extensions = mlir::mhlo::TypeExtensionsAttr::get(&context, bounds);
+    auto extensions =
+        mlir::stablehlo::TypeExtensionsAttr::get(&context, bounds);
     auto expected = mlir::RankedTensorType::get(
         {mlir::ShapedType::kDynamic, 128}, builder.getI32Type(), extensions);
     EXPECT_TRUE(type == expected)

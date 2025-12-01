@@ -38,8 +38,8 @@ MemoryDump ReadDumpFile(const string& fname) {
   }
   std::unique_ptr<char> buffer(static_cast<char*>(malloc(file_size + 1)));
   DCHECK(buffer.get());
-  StringPiece contents(buffer.get(), file_size);
-  status = file->Read(0, file_size, &contents, buffer.get());
+  absl::string_view contents(buffer.get(), file_size);
+  status = file->Read(0, contents, absl::MakeSpan(buffer.get(), file_size));
   if (!status.ok()) {
     LOG(ERROR) << "read from file " << fname << " failed " << status;
   }

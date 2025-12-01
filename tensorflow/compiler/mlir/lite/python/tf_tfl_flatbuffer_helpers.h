@@ -20,15 +20,16 @@ limitations under the License.
 #include <unordered_set>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/OwningOpRef.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/lite/common/tfl_pass_config.h"
 #include "tensorflow/compiler/mlir/lite/converter_flags.pb.h"
 #include "tensorflow/compiler/mlir/lite/model_flags.pb.h"
+#include "tensorflow/compiler/mlir/lite/quantization/common/quantization_lib/quantization_config.h"
 #include "tensorflow/compiler/mlir/lite/transforms/passes.h"
 #include "tensorflow/compiler/mlir/lite/types.pb.h"
-#include "tensorflow/compiler/mlir/quantization/common/quantization_lib/quantization_config.h"
 #include "tensorflow/compiler/mlir/quantization/tensorflow/python/py_function_lib.h"
 #include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/platform/types.h"
@@ -37,22 +38,23 @@ namespace tensorflow {
 namespace internal {
 
 // Register all custom ops including user specified custom ops.
-Status RegisterAllCustomOps(const tflite::ConverterFlags& converter_flags);
+absl::Status RegisterAllCustomOps(
+    const tflite::ConverterFlags& converter_flags);
 
 // Populate quantization specs (or not) given user specified ranges for each
 // input arrays.
-Status PopulateQuantizationSpecs(
+absl::Status PopulateQuantizationSpecs(
     const tflite::ModelFlags& model_flags,
     tflite::ConverterFlags& converter_flags,
-    mlir::quant::QuantizationSpecs* quant_specs,
-    std::vector<string>* node_names, std::vector<string>* node_dtypes,
+    mlir::TFL::QuantizationSpecs* quant_specs, std::vector<string>* node_names,
+    std::vector<string>* node_dtypes,
     std::vector<std::optional<std::vector<int>>>* node_shapes,
     std::vector<std::optional<double>>* node_mins,
     std::vector<std::optional<double>>* node_maxs);
 
 // Convert imported MLIR file to TfLite flatbuffer.
 // This will also run relevant passes as well.
-Status ConvertMLIRToTFLiteFlatBuffer(
+absl::Status ConvertMLIRToTFLiteFlatBuffer(
     const tflite::ModelFlags& model_flags,
     tflite::ConverterFlags& converter_flags,
     std::unique_ptr<mlir::MLIRContext>&& context,

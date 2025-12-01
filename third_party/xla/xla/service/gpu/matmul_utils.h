@@ -28,16 +28,14 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/xla_data.pb.h"
-
-#if TENSORFLOW_USE_ROCM
-#include "rocm/rocm_config.h"
-#endif
 
 namespace xla {
 namespace gpu {
@@ -60,6 +58,10 @@ absl::StatusOr<bool> IsMatrixMultiplicationTooSmallForRewriting(
 // emitters cannot handle some dots, e.g., i8[] x i8[] -> i32[] dots,
 // so we need to always use cuBLAS or Triton for those.
 bool IsDotSupportedByClassicalEmitters(const HloInstruction& dot);
+
+// Returns the accumulator type for the given dot instruction (either extracted
+// from the dot algorithm or inferred from the output type).
+PrimitiveType GetGemmAccumulatorType(HloDotInstruction* dot);
 
 // extending plain MatrixLayout struct with creator functions
 struct MatrixLayout : public se::gpu::MatrixLayout {
@@ -85,14 +87,19 @@ struct GemmConfig : public se::gpu::GemmConfig {
   // Size of the workspace based on NVIDIA recommendation:
   // https://docs.nvidia.com/cuda/cublas/#cublassetworkspace
   static constexpr int64_t kHopperWorkspace = 32 * 1024 * 1024;  // 32 MiB
+  static constexpr int64_t kGFX950Workspace = 64 * 1024 * 1024;  // 64 MiB
   static constexpr int64_t kDefaultWorkspace = 4 * 1024 * 1024;  // 4 MiB
+  // the number of algorithms to consider for autotuning by default
+  static constexpr int64_t kNumAlgorithms = 128;
 
-  static absl::StatusOr<GemmConfig> For(const HloInstruction* gemm);
+  static absl::StatusOr<GemmConfig> For(
+      const HloInstruction* gemm, const se::GpuComputeCapability& gpu_version);
 
   // Gets the GemmConfig of the `gemm` instruction with overridden
   // GemmBackendConfig.
-  static absl::StatusOr<GemmConfig> For(const HloInstruction* gemm,
-                                        const GemmBackendConfig& config);
+  static absl::StatusOr<GemmConfig> For(
+      const HloInstruction* gemm, const GemmBackendConfig& config,
+      const se::GpuComputeCapability& gpu_version);
 
   static absl::StatusOr<GemmConfig> For(
       const Shape& lhs_shape, absl::Span<const int64_t> lhs_batch_dims,
@@ -102,7 +109,7 @@ struct GemmConfig : public se::gpu::GemmConfig {
       double alpha_real, double alpha_imag, double beta,
       PrecisionConfig::Algorithm precision_algorithm,
       std::optional<int64_t> algorithm, int64_t compute_precision, bool grad_x,
-      bool grad_y);
+      bool grad_y, const se::GpuComputeCapability& gpu_version);
 
   // As above with additional `c_shape` and `bias_shape_ptr` parameter, both
   // which are only necessarily for F8 gemms.
@@ -115,7 +122,7 @@ struct GemmConfig : public se::gpu::GemmConfig {
       double alpha_imag, double beta,
       PrecisionConfig::Algorithm precision_algorithm,
       std::optional<int64_t> algorithm, int64_t compute_precision, bool grad_x,
-      bool grad_y);
+      bool grad_y, const se::GpuComputeCapability& gpu_version);
 
   struct DescriptorsTuple {
     se::gpu::MatrixDescriptor lhs;

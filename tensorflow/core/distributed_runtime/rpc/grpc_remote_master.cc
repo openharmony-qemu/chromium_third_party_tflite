@@ -115,7 +115,7 @@ class GrpcRemoteMaster : public MasterInterface {
 
  private:
   // Start tracing, attaching a unique ID to both the trace and the RPC.
-  tsl::profiler::TraceMe* NewTraceRpc(StringPiece name,
+  tsl::profiler::TraceMe* NewTraceRpc(absl::string_view name,
                                       ::grpc::ClientContext* ctx) {
     string trace_id = strings::StrCat(tsl::tracing::GetUniqueArg());
     ctx->AddMetadata(GrpcIdKey(), trace_id);
@@ -152,7 +152,7 @@ class GrpcRemoteMaster : public MasterInterface {
         ctx.set_deadline(absl::ToChronoTime(absl::Now() + timeout));
       }
       s = FromGrpcStatus((stub_.get()->*pfunc)(&ctx, *request, response));
-      if (!errors::IsUnavailable(s)) {
+      if (!absl::IsUnavailable(s)) {
         return s;
       }
       // TODO(b/117162170): we may want to make this configurable.

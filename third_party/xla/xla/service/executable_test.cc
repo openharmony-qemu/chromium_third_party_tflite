@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <memory>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -25,9 +24,9 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/hlo_execution_profile.h"
 #include "xla/service/service_executable_run_options.h"
-#include "xla/tests/hlo_test_base.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
@@ -43,13 +42,12 @@ class TestExecutable : public Executable {
 
   absl::StatusOr<ExecutionOutput> ExecuteAsyncOnStream(
       const ServiceExecutableRunOptions* run_options,
-      std::vector<ExecutionInput> arguments,
-      HloExecutionProfile* hlo_execution_profile) override {
+      std::vector<ExecutionInput> arguments) override {
     return absl::UnimplementedError("Not needed for this test.");
   }
 };
 
-class ExecutableTest : public HloTestBase {};
+class ExecutableTest : public HloHardwareIndependentTestBase {};
 
 TEST_F(ExecutableTest, HloProtoGetterIsThreadCompatible) {
   // Executable::hlo_proto() is doing some lazy initialization of a
@@ -57,7 +55,7 @@ TEST_F(ExecutableTest, HloProtoGetterIsThreadCompatible) {
   // thread-compatible way.
   // Note that this test needs to run with --config=tsan to reliably
   // detect any potential data races.
-  constexpr std::string_view kHloModule = R"(
+  constexpr absl::string_view kHloModule = R"(
     HloModule module
 
     ENTRY main {

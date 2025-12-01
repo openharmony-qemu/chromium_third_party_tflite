@@ -24,6 +24,8 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -33,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
@@ -47,6 +50,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
@@ -80,7 +84,7 @@ static std::vector<HloCustomCallInstruction*> GetRelevantConvs(
     HloComputation* comp) {
   std::vector<HloCustomCallInstruction*> convs;
   for (HloInstruction* instr : comp->instructions()) {
-    if (instr->opcode() != HloOpcode::kCustomCall ||
+    if (HloPredicateIsNotOp<HloOpcode::kCustomCall>(instr) ||
         (instr->custom_call_target() != kCudnnConvForwardCallTarget &&
          instr->custom_call_target() !=
              kCudnnConvBiasActivationForwardCallTarget) ||
@@ -127,7 +131,7 @@ static Shape SplitShapeAtDim(Shape shape, int64_t dim, int64_t vect_size) {
 // Transposes dimension `src` to right before `dst`.
 static XlaOp MoveDim(XlaOp instr, int64_t src, int64_t dst) {
   XlaBuilder& b = *instr.builder();
-  int64_t rank = b.GetShape(instr)->dimensions_size();
+  int64_t rank = b.GetShape(instr)->dimensions().size();
 
   DimensionVector idxs(rank);
   absl::c_iota(idxs, 0);
@@ -405,8 +409,7 @@ static absl::StatusOr<bool> TryRevectorizeConv(
   const auto& debug_options = conv->GetModule()->config().debug_options();
   bool use_reordering =
       input_shape.element_type() == xla::S8 && vect_size == 32 &&
-      debug_options.xla_gpu_enable_cudnn_int8x32_convolution_reordering() &&
-      cudnn_version >= se::dnn::VersionInfo{8, 3, 0};
+      debug_options.xla_gpu_enable_cudnn_int8x32_convolution_reordering();
   if (use_reordering) {
     // Reordering helper supports vector sizes of 4 and 32, so an additional
     // reshape-transpose-reshape is not necessary in these cases.
@@ -452,10 +455,8 @@ static absl::StatusOr<bool> TryRevectorizeConv(
   // Set the name on the new conv.  This is purely cosmetic, but we attempt to
   // preserve e.g. "cudnn-conv.42" instead of "custom-call.42".
   auto new_conv_comp_instrs = new_conv_comp->instructions();
-  auto new_conv_it =
-      absl::c_find_if(new_conv_comp_instrs, [](HloInstruction* instr) {
-        return instr->opcode() == HloOpcode::kCustomCall;
-      });
+  auto new_conv_it = absl::c_find_if(new_conv_comp_instrs,
+                                     HloPredicateIsOp<HloOpcode::kCustomCall>);
   if (new_conv_it != new_conv_comp_instrs.end()) {
     new_conv_comp->parent()->SetAndUniquifyInstrName(*new_conv_it,
                                                      conv->name());
@@ -495,7 +496,7 @@ static absl::StatusOr<bool> TryVectorizeConv(
     return false;
   }
 
-  if (input_shape.dimensions_size() >
+  if (input_shape.dimensions().size() >
       2 + dnums->input_spatial_dimensions_size()) {
     // Conv already has an extra dimension, which we assume is the vectorized
     // features dim.
@@ -552,8 +553,7 @@ static absl::StatusOr<bool> TryVectorizeConv(
   const auto& debug_options = conv->GetModule()->config().debug_options();
   bool use_reordering =
       input_shape.element_type() == xla::S8 && vect_size == 32 &&
-      debug_options.xla_gpu_enable_cudnn_int8x32_convolution_reordering() &&
-      cudnn_version >= se::dnn::VersionInfo{8, 3, 0};
+      debug_options.xla_gpu_enable_cudnn_int8x32_convolution_reordering();
   if (use_reordering) {
     new_operands[1] = filter;
     TF_RETURN_IF_ERROR(ReorderInt8NchwVect(conv, new_operands.data()));

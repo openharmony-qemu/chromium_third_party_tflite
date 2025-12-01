@@ -3,14 +3,17 @@
 
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured", "rocm_copts", "rocm_library")
-load("@local_tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
+load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load("//xla/tests:build_defs.bzl", "prepare_gpu_backend_data")
+load("//xla/tsl:package_groups.bzl", "DEFAULT_LOAD_VISIBILITY")
 
 # buildifier: disable=out-of-order-load
 # Internally this loads a macro, but in OSS this is a function
 def register_extension_info(**_kwargs):
     pass
+
+visibility(DEFAULT_LOAD_VISIBILITY)
 
 def get_cub_sort_kernel_types(name = ""):
     """ List of supported types for CUB sort kernels.
@@ -39,6 +42,9 @@ def get_cub_sort_kernel_types(name = ""):
         "u8_b16",
         "u8_b32",
         "u8_b64",
+        "f32_b16",
+        "f32_b32",
+        "f32_b64",
     ]
 
 def build_cub_sort_kernels(name, types, local_defines = [], **kwargs):
@@ -173,7 +179,7 @@ def gen_gpu_hlo_compile_tests(
 
         # Expand "gpu" backend name to specific GPU backends and update tags.
         backends, disabled_backends, backend_tags, backend_args = \
-            prepare_gpu_backend_data(backends, disabled_backends, backend_tags, backend_args)
+            prepare_gpu_backend_data(backends, disabled_backends, backend_tags, backend_args, tags)
 
         backends = [
             backend
@@ -195,4 +201,5 @@ def gen_gpu_hlo_compile_tests(
                 ] + xla_flags,
                 data = ["//xla/tools/multihost_hlo_runner:hlo_runner_main_gpu", data_label],
                 tags = backend_tags[backend] + ["requires-mem:16g", "nozapfhahn"] + tags,
+                timeout = "long",
             )

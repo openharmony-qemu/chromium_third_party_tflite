@@ -44,18 +44,17 @@ class IfrtPersistentCompilationCache {
   // for looking up the executable in the persistent cache and it will return
   // the LoadedExecutable if hits cache. Otherwise, it will call the `value_fn`
   // to generate and return the LoadedExecutable.
-  virtual absl::StatusOr<std::unique_ptr<xla::ifrt::LoadedExecutable>>
+  virtual absl::StatusOr<xla::ifrt::LoadedExecutableRef>
   LookupLoadedExecutableOrCreate(
       std::unique_ptr<xla::ifrt::HloProgram> hlo_program,
-      tsl::RCReference<xla::ifrt::DeviceList> device_list,
+      xla::ifrt::DeviceListRef device_list,
       const xla::CompileOptions& xla_compile_options,
       const std::vector<tsl::RCReference<xla::ifrt::LoadedHostCallback>>&
           loaded_host_callbacks,
       xla::ifrt::Client* client,
-      absl::AnyInvocable<
-          absl::StatusOr<std::unique_ptr<xla::ifrt::LoadedExecutable>>(
-              std::unique_ptr<xla::ifrt::Program> program,
-              std::unique_ptr<xla::ifrt::CompileOptions> options)>
+      absl::AnyInvocable<absl::StatusOr<xla::ifrt::LoadedExecutableRef>(
+          std::unique_ptr<xla::ifrt::Program> program,
+          std::unique_ptr<xla::ifrt::CompileOptions> options)>
           value_fn);
 
   // The implementation of this API should be thread-safe. It generates a key
@@ -63,8 +62,7 @@ class IfrtPersistentCompilationCache {
   // the Tf2HloResult if hits cache. Otherwise, it will call the `value_fn` to
   // generate and return the Tf2HloResult.
   virtual absl::StatusOr<Tf2HloResult> LookupTf2HloResultOrCreate(
-      Tf2HloArg tf2hlo_arg,
-      tsl::RCReference<xla::ifrt::DeviceList> device_list);
+      Tf2HloArg tf2hlo_arg, TfToHloCompiler* tf_to_hlo_compiler);
 
   virtual bool IsXlaCompilationCacheEnabled() const { return false; }
   virtual bool IsTf2HloCompilationCacheEnabled() const { return false; }

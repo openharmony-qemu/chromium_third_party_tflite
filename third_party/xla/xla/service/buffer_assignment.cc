@@ -31,6 +31,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -50,6 +51,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/map_util.h"
+#include "xla/service/buffer_assignment.pb.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/heap_simulator/heap_simulator.h"
@@ -61,11 +63,11 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 #include "tsl/platform/numbers.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -234,6 +236,29 @@ absl::Status GatherComputationsByAllocationType(
 std::string BufferAllocation::Slice::ToString() const {
   return absl::StrCat("{index:", allocation_ == nullptr ? -1 : index(),
                       ", offset:", offset_, ", size:", size_, "}");
+}
+
+absl::StatusOr<xla::buffer_assignment::BufferAllocationSliceProto>
+BufferAllocation::Slice::ToProto() const {
+  xla::buffer_assignment::BufferAllocationSliceProto proto;
+  proto.set_offset(offset());
+  proto.set_size(size());
+  proto.set_buffer_allocation_index(allocation() == nullptr ? -1 : index());
+  return proto;
+}
+
+absl::StatusOr<BufferAllocation::Slice> BufferAllocation::Slice::FromProto(
+    const xla::buffer_assignment::BufferAllocationSliceProto& proto,
+    absl::Span<const BufferAllocation> buffer_allocations) {
+  if (proto.buffer_allocation_index() < 0 ||
+      proto.buffer_allocation_index() >= buffer_allocations.size()) {
+    return absl::OutOfRangeError(absl::StrCat("Buffer allocation index ",
+                                              proto.buffer_allocation_index(),
+                                              " is out of range."));
+  }
+  const BufferAllocation& allocation =
+      buffer_allocations[proto.buffer_allocation_index()];
+  return BufferAllocation::Slice(&allocation, proto.offset(), proto.size());
 }
 
 BufferAllocation::Slice BufferAllocation::GetSlice(
@@ -656,7 +681,7 @@ void BufferAssignment::CombineTempAllocations(
         // size constraint.
         VLOG(1) << "Combined temp allocation for color " << color
                 << " is: " << temp_allocation;
-        combined_allocations.emplace_back(temp_allocation);
+        combined_allocations.push_back(temp_allocation);
         combined_allocation_map.emplace(color, &combined_allocations.back());
         continue;
       }
@@ -666,7 +691,7 @@ void BufferAssignment::CombineTempAllocations(
         // combined_it.
         VLOG(1) << "Due to size constraint, reset temp allocation for color "
                 << color << " to: " << temp_allocation;
-        combined_allocations.emplace_back(temp_allocation);
+        combined_allocations.push_back(temp_allocation);
         combined_allocation_map.emplace(color, &combined_allocations.back());
         continue;
       }
@@ -747,7 +772,7 @@ void BufferAssignment::CombineTempAllocations(
   }
 }
 
-absl::Status BufferAssignment::ComputeSummaryStats() {
+void BufferAssignment::ComputeSummaryStats() {
   for (auto& allocation : Allocations()) {
     if (allocation.is_entry_computation_parameter()) {
       stats_.parameter_allocation_count++;
@@ -768,7 +793,10 @@ absl::Status BufferAssignment::ComputeSummaryStats() {
     stats_.total_allocation_count++;
     stats_.total_allocation_bytes += allocation.size();
   }
+}
 
+absl::StatusOr<int64_t> BufferAssignment::ComputeTotalFragmentationBytes()
+    const {
   // Only compute total fragmentation if all computations have schedules.
   HloSchedule schedule(module_);
   bool schedule_complete = true;
@@ -788,37 +816,44 @@ absl::Status BufferAssignment::ComputeSummaryStats() {
     TF_ASSIGN_OR_RETURN(
         const int64_t min_size,
         HeapSimulator::MinimumMemoryForModule(schedule, buffer_size_));
-    stats_.total_fragmentation_bytes = stats_.total_allocation_bytes - min_size;
+    return stats_.total_allocation_bytes - min_size;
   }
-
-  return absl::OkStatus();
+  return -1;
 }
 
-std::string BufferAssignment::Stats::ToString() const {
+std::string BufferAssignment::StatsString(
+    bool report_total_fragmentation) const {
   std::string s;
   StrAppendFormat(&s, "BufferAssignment stats:\n");
   StrAppendFormat(&s, "             parameter allocation: %10s\n",
-                  HumanReadableNumBytes(parameter_allocation_bytes));
+                  HumanReadableNumBytes(stats_.parameter_allocation_bytes));
   StrAppendFormat(&s, "              constant allocation: %10s\n",
-                  HumanReadableNumBytes(constant_allocation_bytes));
-  StrAppendFormat(&s, "        maybe_live_out allocation: %10s\n",
-                  HumanReadableNumBytes(maybe_live_out_allocation_bytes));
-  StrAppendFormat(&s, "     preallocated temp allocation: %10s\n",
-                  HumanReadableNumBytes(preallocated_temp_allocation_bytes));
-  if (preallocated_temp_fragmentation_bytes >= 0) {
-    const double percent = 100. * preallocated_temp_fragmentation_bytes /
-                           preallocated_temp_allocation_bytes;
+                  HumanReadableNumBytes(stats_.constant_allocation_bytes));
+  StrAppendFormat(
+      &s, "        maybe_live_out allocation: %10s\n",
+      HumanReadableNumBytes(stats_.maybe_live_out_allocation_bytes));
+  StrAppendFormat(
+      &s, "     preallocated temp allocation: %10s\n",
+      HumanReadableNumBytes(stats_.preallocated_temp_allocation_bytes));
+  if (stats_.preallocated_temp_fragmentation_bytes >= 0) {
+    const double percent = 100. * stats_.preallocated_temp_fragmentation_bytes /
+                           stats_.preallocated_temp_allocation_bytes;
     StrAppendFormat(
         &s, "  preallocated temp fragmentation: %10s (%.2f%%)\n",
-        HumanReadableNumBytes(preallocated_temp_fragmentation_bytes), percent);
+        HumanReadableNumBytes(stats_.preallocated_temp_fragmentation_bytes),
+        percent);
   }
   StrAppendFormat(&s, "                 total allocation: %10s\n",
-                  HumanReadableNumBytes(total_allocation_bytes));
-  if (total_fragmentation_bytes >= 0) {
-    const double percent =
-        100. * total_fragmentation_bytes / total_allocation_bytes;
-    StrAppendFormat(&s, "              total fragmentation: %10s (%.2f%%)\n",
-                    HumanReadableNumBytes(total_fragmentation_bytes), percent);
+                  HumanReadableNumBytes(stats_.total_allocation_bytes));
+  if (report_total_fragmentation) {
+    auto total_fragmentation_bytes = ComputeTotalFragmentationBytes();
+    if (total_fragmentation_bytes.ok() && *total_fragmentation_bytes >= 0) {
+      const double percent =
+          100. * *total_fragmentation_bytes / stats_.total_allocation_bytes;
+      StrAppendFormat(&s, "              total fragmentation: %10s (%.2f%%)\n",
+                      HumanReadableNumBytes(*total_fragmentation_bytes),
+                      percent);
+    }
   }
   return s;
 }
@@ -1020,7 +1055,8 @@ std::vector<std::pair<int64_t, const HloValue*>> TopKPeakBuffers(
 std::string BufferAssignment::ToVerboseString(
     size_t max_buffers_to_show) const {
   std::string output =
-      absl::StrCat("BufferAssignment OOM Debugging.\n", stats_.ToString());
+      absl::StrCat("BufferAssignment OOM Debugging.\n",
+                   StatsString(/*report_total_fragmentation=*/true));
 
   std::vector<std::pair<int64_t, const HloValue*>> peak_buffers =
       TopKPeakBuffers(max_buffers_to_show, allocations_);
@@ -1213,8 +1249,11 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
       absl::c_copy(alloc_proto.parameter_shape_index(),
                    std::back_inserter(shape_idx_vals));
       ShapeIndex shape_index(shape_idx_vals);
+      const bool parameter_has_alias =
+          module->input_output_alias_config().ParameterHasAlias(
+              alloc_proto.parameter_number(), shape_index);
       allocation->set_entry_computation_parameter(
-          alloc_proto.parameter_number(), shape_index, false);
+          alloc_proto.parameter_number(), shape_index, parameter_has_alias);
     }
 
     // Process each logical buffer assigned to the current allocation and create
@@ -2279,8 +2318,9 @@ BufferAssigner::CreateAssignment(
   assignment->CombineTempAllocations(private_stack_colors, temp_buffer_color);
 
   XLA_VLOG_LINES(2, assignment->ToString());
-  TF_RETURN_IF_ERROR(assignment->ComputeSummaryStats());
-  XLA_VLOG_LINES(1, assignment->GetStats().ToString());
+  assignment->ComputeSummaryStats();
+  XLA_VLOG_LINES(1,
+                 assignment->StatsString(/*report_total_fragmentation=*/true));
   VLOG(1) << "Buffer assignment done.";
   return std::move(assignment);
 }

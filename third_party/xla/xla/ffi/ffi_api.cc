@@ -19,21 +19,23 @@ limitations under the License.
 #include <cstdint>
 #include <exception>
 #include <string>
-#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "absl/base/optimization.h"
-#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/numeric/bits.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/api.h"
 #include "xla/ffi/api/c_api.h"
@@ -51,9 +53,9 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 #define EIGEN_USE_THREADS
 #include "unsupported/Eigen/CXX11/Tensor"
@@ -82,6 +84,7 @@ struct XLA_FFI_ExecutionContext {
 
   using BackendContext = std::variant<std::monostate, CpuContext, GpuContext>;
 
+  xla::RunId run_id = {};
   int32_t device_ordinal = -1;
   BackendContext backend_context = {};
 
@@ -119,6 +122,7 @@ static XLA_FFI_ExecutionContext CreateExecutionContext(
   };
 
   return XLA_FFI_ExecutionContext{
+      options.run_id,
       options.device_ordinal,
       std::visit(BackendVisitor{}, options.backend_options),
       options.called_computation,
@@ -329,13 +333,13 @@ const ExecutionContext* ScopedExecutionContext::GetCallExecutionContext(
 using HandlerKey = std::pair<std::string, std::string>;
 using HandlerRegistry = absl::flat_hash_map<HandlerKey, HandlerRegistration>;
 
-static HandlerKey MakeHandlerKey(std::string_view name,
-                                 std::string_view platform) {
+static HandlerKey MakeHandlerKey(absl::string_view name,
+                                 absl::string_view platform) {
   return std::make_pair(std::string(name), absl::AsciiStrToLower(platform));
 }
 
 static HandlerRegistry& GetHandlerRegistry() {
-  static auto* registry = new HandlerRegistry();
+  static auto* const registry = new HandlerRegistry();
   return *registry;
 }
 
@@ -349,8 +353,8 @@ static std::vector<std::string> GetHandlerStages(
   return stages;
 }
 
-static absl::Status RegisterHandler(std::string_view name,
-                                    std::string_view platform,
+static absl::Status RegisterHandler(absl::string_view name,
+                                    absl::string_view platform,
                                     XLA_FFI_Handler_Bundle bundle,
                                     XLA_FFI_Handler_Traits traits) {
   TF_ASSIGN_OR_RETURN(std::string canonical_platform,
@@ -370,7 +374,7 @@ static absl::Status RegisterHandler(std::string_view name,
       api_version.minor_version != XLA_FFI_API_MINOR) {
     return InvalidArgument(
         "FFI handler registration for %s on platform %s (canonical %s) failed "
-        "because the hander's API version (%d.%d) is incompatible with the "
+        "because the handler's API version (%d.%d) is incompatible with the "
         "framework's API version (%d.%d)",
         name, platform, canonical_platform, api_version.major_version,
         api_version.minor_version, XLA_FFI_API_MAJOR, XLA_FFI_API_MINOR);
@@ -409,8 +413,8 @@ static absl::Status RegisterHandler(std::string_view name,
   return absl::OkStatus();
 }
 
-absl::StatusOr<HandlerRegistration> FindHandler(std::string_view name,
-                                                std::string_view platform) {
+absl::StatusOr<HandlerRegistration> FindHandler(absl::string_view name,
+                                                absl::string_view platform) {
   TF_ASSIGN_OR_RETURN(std::string canonical_platform,
                       PlatformUtil::CanonicalPlatformName(platform));
 
@@ -424,7 +428,7 @@ absl::StatusOr<HandlerRegistration> FindHandler(std::string_view name,
 }
 
 absl::StatusOr<absl::flat_hash_map<std::string, HandlerRegistration>>
-StaticRegisteredHandlers(std::string_view platform) {
+StaticRegisteredHandlers(absl::string_view platform) {
   TF_ASSIGN_OR_RETURN(std::string canonical_platform,
                       PlatformUtil::CanonicalPlatformName(platform));
 
@@ -442,7 +446,7 @@ StaticRegisteredHandlers(std::string_view platform) {
 // XLA FFI Api Implementation
 //===----------------------------------------------------------------------===//
 
-static std::string StructSizeErrorMsg(std::string_view struct_name,
+static std::string StructSizeErrorMsg(absl::string_view struct_name,
                                       size_t expected, size_t actual) {
   return absl::StrCat("Unexpected ", struct_name, " size: expected ", expected,
                       ", got ", actual, ". Check installed software versions. ",
@@ -451,7 +455,7 @@ static std::string StructSizeErrorMsg(std::string_view struct_name,
 }
 
 static absl::Status ActualStructSizeIsGreaterOrEqual(
-    std::string_view struct_name, size_t expected, size_t actual) {
+    absl::string_view struct_name, size_t expected, size_t actual) {
   if (actual < expected) {
     return InvalidArgument("%s",
                            StructSizeErrorMsg(struct_name, expected, actual));
@@ -582,8 +586,8 @@ static XLA_FFI_Error* XLA_FFI_Handler_Register(
       args->struct_size));
 
   if (auto status = RegisterHandler(
-          std::string_view(args->name.ptr, args->name.len),
-          std::string_view(args->platform.ptr, args->platform.len),
+          absl::string_view(args->name.ptr, args->name.len),
+          absl::string_view(args->platform.ptr, args->platform.len),
           args->bundle, args->traits);
       !status.ok()) {
     return new XLA_FFI_Error{std::move(status)};
@@ -615,19 +619,52 @@ static XLA_FFI_Error* XLA_FFI_Stream_Get(XLA_FFI_Stream_Get_Args* args) {
   return nullptr;
 }
 
+static XLA_FFI_Error* XLA_FFI_RunId_Get(XLA_FFI_RunId_Get_Args* args) {
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_RunId_Get", XLA_FFI_RunId_Get_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  args->run_id = args->ctx->run_id.ToInt();
+
+  return nullptr;
+}
+
+static XLA_FFI_Error* XLA_FFI_DeviceOrdinal_Get(
+    XLA_FFI_DeviceOrdinal_Get_Args* args) {
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_DeviceOrdinal_Get", XLA_FFI_DeviceOrdinal_Get_Args_STRUCT_SIZE,
+      args->struct_size));
+  args->device_ordinal = args->ctx->device_ordinal;
+  return nullptr;
+}
+
 static XLA_FFI_Error* XLA_FFI_TypeId_Register(
     XLA_FFI_TypeId_Register_Args* args) {
   XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "XLA_FFI_ExecutionContext_Get_Args",
       XLA_FFI_ExecutionContext_Get_Args_STRUCT_SIZE, args->struct_size));
 
-  auto type_id = TypeIdRegistry::RegisterExternalTypeId(
-      std::string_view(args->name.ptr, args->name.len));
-  if (!type_id.ok()) {
-    return new XLA_FFI_Error{std::move(type_id).status()};
+  absl::string_view type_name(args->name.ptr, args->name.len);
+  TypeIdRegistry::TypeId type_id(args->type_id->type_id);
+
+  // If type_id is unknown, we are registering a new type and XLA will assign a
+  // unique type id to it.
+  if (type_id == TypeIdRegistry::kUnknownTypeId) {
+    auto assigned_type_id = TypeIdRegistry::AssignExternalTypeId(type_name);
+    if (!assigned_type_id.ok()) {
+      return new XLA_FFI_Error{std::move(assigned_type_id).status()};
+    }
+
+    args->type_id->type_id = assigned_type_id->value();
+    return nullptr;
   }
 
-  args->type_id->type_id = type_id->value();
+  // If type_id is set, we are relying on the caller-provided unique type id.
+  if (auto status = TypeIdRegistry::RegisterExternalTypeId(type_name, type_id);
+      !status.ok()) {
+    return new XLA_FFI_Error{std::move(status)};
+  }
+
   return nullptr;
 }
 
@@ -756,28 +793,52 @@ static XLA_FFI_Error* XLA_FFI_DeviceMemory_Free(
   return nullptr;
 }
 
+static absl::StatusOr<const Eigen::ThreadPoolDevice*> GetIntraOpThreadPool(
+    const XLA_FFI_ExecutionContext* ctx) {
+  auto* cpu =
+      std::get_if<XLA_FFI_ExecutionContext::CpuContext>(&ctx->backend_context);
+
+  if (ABSL_PREDICT_FALSE(cpu == nullptr)) {
+    return Unimplemented("XLA FFI CPU context is not available");
+  }
+
+  if (ABSL_PREDICT_FALSE(cpu->intra_op_thread_pool == nullptr)) {
+    return Unimplemented("No intra-op thread pool available on this platform");
+  }
+
+  return cpu->intra_op_thread_pool;
+}
+
 static XLA_FFI_Error* XLA_FFI_ThreadPool_Schedule(
     XLA_FFI_ThreadPool_Schedule_Args* args) {
   XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "XLA_FFI_ThreadPool_Schedule_Args",
       XLA_FFI_ThreadPool_Schedule_Args_STRUCT_SIZE, args->struct_size));
 
-  auto* cpu = std::get_if<XLA_FFI_ExecutionContext::CpuContext>(
-      &args->ctx->backend_context);
-
-  if (ABSL_PREDICT_FALSE(cpu == nullptr)) {
-    return new XLA_FFI_Error{
-        Unimplemented("XLA FFI CPU context is not available")};
+  auto intra_op_thread_pool = GetIntraOpThreadPool(args->ctx);
+  if (!intra_op_thread_pool.ok()) {
+    return new XLA_FFI_Error{std::move(intra_op_thread_pool).status()};
   }
 
-  if (ABSL_PREDICT_FALSE(cpu->intra_op_thread_pool == nullptr)) {
-    return new XLA_FFI_Error{
-        Unimplemented("No intra-op thread pool available on this platform")};
+  (*intra_op_thread_pool)
+      ->enqueueNoNotification(
+          [task = args->task, data = args->data] { (*task)(data); });
+
+  return nullptr;
+}
+
+static XLA_FFI_Error* XLA_FFI_ThreadPool_NumThreads(
+    XLA_FFI_ThreadPool_NumThreads_Args* args) {
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_ThreadPool_NumThreads_Args",
+      XLA_FFI_ThreadPool_NumThreads_Args_STRUCT_SIZE, args->struct_size));
+
+  auto intra_op_thread_pool = GetIntraOpThreadPool(args->ctx);
+  if (!intra_op_thread_pool.ok()) {
+    return new XLA_FFI_Error{std::move(intra_op_thread_pool).status()};
   }
 
-  cpu->intra_op_thread_pool->enqueueNoNotification(
-      [task = args->task, data = args->data] { (*task)(data); });
-
+  *args->num_threads = (*intra_op_thread_pool)->numThreadsInPool();
   return nullptr;
 }
 
@@ -814,6 +875,10 @@ static void* XLA_FFI_INTERNAL_Stream_Get(XLA_FFI_ExecutionContext* ctx) {
 static int32_t XLA_FFI_INTERNAL_DeviceOrdinal_Get(
     XLA_FFI_ExecutionContext* ctx) {
   return ctx->device_ordinal;
+}
+
+static int64_t XLA_FFI_INTERNAL_RunId_Get(XLA_FFI_ExecutionContext* ctx) {
+  return ctx->run_id.ToInt();
 }
 
 static void* XLA_FFI_INTERNAL_DeviceMemoryAllocator_Get(
@@ -863,6 +928,7 @@ static XLA_FFI_InternalApi internal_api = {
     XLA_FFI_INTERNAL_Future_Forward,
     XLA_FFI_INTERNAL_Stream_Get,
     XLA_FFI_INTERNAL_DeviceOrdinal_Get,
+    XLA_FFI_INTERNAL_RunId_Get,
     XLA_FFI_INTERNAL_DeviceMemoryAllocator_Get,
     XLA_FFI_INTERNAL_CalledComputation_Get,
     XLA_FFI_INTERNAL_ExecutionContext_Get,
@@ -895,9 +961,12 @@ static XLA_FFI_Api api = {
     XLA_FFI_DeviceMemory_Allocate,
     XLA_FFI_DeviceMemory_Free,
     XLA_FFI_ThreadPool_Schedule,
+    XLA_FFI_ThreadPool_NumThreads,
     XLA_FFI_Future_Create,
     XLA_FFI_Future_SetAvailable,
     XLA_FFI_Future_SetError,
+    XLA_FFI_RunId_Get,
+    XLA_FFI_DeviceOrdinal_Get,
 };
 
 const XLA_FFI_Api* GetXlaFfiApi() { return &api; }

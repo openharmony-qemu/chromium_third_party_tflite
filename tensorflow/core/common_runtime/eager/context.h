@@ -398,6 +398,8 @@ class EagerContext : public ImmediateExecutionContext, public core::RefCounted {
 
   FunctionLibraryDefinition* FuncLibDef() override { return &func_lib_def_; }
 
+  const FunctionLibraryDefinition* FuncLibDef() const { return &func_lib_def_; }
+
   FunctionLibraryDefinition* GetComponentFunctionFunctionLibraryDefinition(
       const string& function_name) {
     tf_shared_lock lock(cache_mu_);
@@ -562,7 +564,7 @@ class EagerContext : public ImmediateExecutionContext, public core::RefCounted {
   absl::Status FindDeviceFromName(const char* device_name,
                                   Device** device) const;
 
-  absl::Status FindCompositeDeviceFromName(StringPiece device_name,
+  absl::Status FindCompositeDeviceFromName(absl::string_view device_name,
                                            CompositeDevice** device) const;
 
   bool IsCustomDevice(const string& device_name) override;
