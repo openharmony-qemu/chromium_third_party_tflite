@@ -31,6 +31,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "build/build_config.h"
+#if BUILDFLAG(IS_ARKWEB)
+#include "arkweb/build/features/features.h"
+#endif
 #include "tensorflow/compiler/mlir/lite/allocation.h"
 #include "tensorflow/lite/array.h"
 #include "tensorflow/lite/builtin_ops.h"
@@ -1374,7 +1378,11 @@ TfLiteStatus Subgraph::OpPrepare(const TfLiteRegistration& op_reg,
         if (IsUnresolvedCustomOp(op_reg)) {
           ReportError(
               "Encountered unresolved custom op: %s.\nSee instructions: "
+#if BUILDFLAG(ARKWEB_PRIVACY_COMPLIANCE)
+              "https://*** ",
+#else
               "https://www.tensorflow.org/lite/guide/ops_custom ",
+#endif
               op_reg.custom_name ? op_reg.custom_name : "UnknownOp");
           return kTfLiteUnresolvedOps;
         } else {
@@ -1408,11 +1416,19 @@ TfLiteStatus Subgraph::OpPrepare(const TfLiteRegistration& op_reg,
             "delegate before inference. For the Android, it can be resolved by "
             "adding \"org.tensorflow:tensorflow-lite-select-tf-ops\" "
             "dependency. See instructions: "
+#if BUILDFLAG(ARKWEB_PRIVACY_COMPLIANCE)
+            "https://***");
+#else
             "https://www.tensorflow.org/lite/guide/ops_select");
+#endif
       } else {
         ReportError(
             "Encountered unresolved custom op: %s.\nSee instructions: "
+#if BUILDFLAG(ARKWEB_PRIVACY_COMPLIANCE)
+            "https://*** ",
+#else
             "https://www.tensorflow.org/lite/guide/ops_custom ",
+#endif
             op_reg.custom_name ? op_reg.custom_name : "UnknownOp");
       }
       return kTfLiteUnresolvedOps;
